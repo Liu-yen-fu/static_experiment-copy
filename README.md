@@ -105,7 +105,7 @@ tools/bin/drop_caches.sh
 
 ### 2. Provision 三種 database layout
 
-使用專案附帶的 canonical SQLite database：
+使用專案附帶的 SQLite database builder 建立 database 後，執行以下指令：
 
 ```bash
 python3 tools/src/build_layouts.py \
