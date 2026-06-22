@@ -35,6 +35,40 @@ MEMORY_UNITS = {"B": 1, "KiB": 1024, "MiB": 1024 ** 2, "GiB": 1024 ** 3}
 MAX_EXACT_JSON_INTEGER = 2 ** 53 - 1
 
 
+class CellProgress:
+    def __init__(self, total: int) -> None:
+        self.total = total
+        self.done = 0
+        self.counts = {"completed": 0, "skipped": 0, "failed": 0, "timeout": 0, "invalid": 0}
+        self.tty = sys.stderr.isatty()
+        self.interval = max(1, (total + 99) // 100)
+        print(f"[cells] total={total}", file=sys.stderr, flush=True)
+
+    def _summary(self, label: str) -> str:
+        percent = self.done / self.total * 100 if self.total else 100.0
+        counts = " ".join(f"{key}={self.counts[key]}" for key in ("completed", "skipped", "failed", "timeout"))
+        return f"[cells {self.done}/{self.total} {percent:6.2f}%] {counts} {label}"
+
+    def start(self, label: str) -> None:
+        if self.tty:
+            print("\r\033[2K" + self._summary("running=" + label), end="", file=sys.stderr, flush=True)
+        elif self.done == 0:
+            print(self._summary("running=" + label), file=sys.stderr, flush=True)
+
+    def advance(self, status: str, label: str) -> None:
+        self.done += 1
+        self.counts[status] = self.counts.get(status, 0) + 1
+        summary = self._summary("last=" + label)
+        if self.tty:
+            print("\r\033[2K" + summary, end="", file=sys.stderr, flush=True)
+        elif self.done == self.total or self.done % self.interval == 0 or status in {"failed", "timeout", "invalid"}:
+            print(summary, file=sys.stderr, flush=True)
+
+    def close(self) -> None:
+        if self.tty:
+            print(file=sys.stderr, flush=True)
+
+
 def nested(config: dict[str, Any], path: str, kind: type | tuple[type, ...] | None = None) -> Any:
     value: Any = config
     for component in path.split("."):
@@ -391,11 +425,16 @@ def ensure_profile(root: Path, layout_name: str, workload_type: str, layout: dic
     if profile.is_file() and profile_csv.is_file():
         metadata = read_json(profile)
         if metadata.get("profile_csv_sha256") == sha256_file(profile_csv) and metadata.get("database_sha256") == layout["database_sha256"] and metadata.get("memory_condition") == memory_condition:
+            print(f"[training] reused profile {layout_name}/{workload_type}/{memory_condition['name']} ({pid[:12]})", file=sys.stderr, flush=True)
             return pid, target
     snapshots = target / "snapshots"; snapshots.mkdir(parents=True, exist_ok=True)
     for index, workload in enumerate(training, 1):
         snapshot = snapshots / f"{index:03d}.csv"
-        if snapshot.is_file(): continue
+        label = f"{layout_name}/{workload_type}/{memory_condition['name']} {index}/{len(training)} {workload['name']}"
+        if snapshot.is_file():
+            print(f"[training] reused snapshot {label}", file=sys.stderr, flush=True)
+            continue
+        print(f"[training] running {label}", file=sys.stderr, flush=True)
         run_dir = target / "runs" / f"{index:03d}"; run_dir.mkdir(parents=True, exist_ok=True)
         command = [str(context["paths"]["benchmark_harness"]), "--db", str(layout["database"]), "--workload", workload["path"], "--output", str(run_dir / "operations.csv"), "--record-dir", str(run_dir), "--mmap-size", str(layout["database"].stat().st_size), "--cold-advice", "none", "--sqlite-open-timing", "before-cold", "--schema-init-timing", "before-cold", "--drop-caches-script", str(context["paths"]["drop_caches_script"])]
         if config["cold_protocol"].get("drop_caches_use_sudo"): command.append("--drop-caches-use-sudo")
@@ -403,6 +442,7 @@ def ensure_profile(root: Path, layout_name: str, workload_type: str, layout: dic
         code, timed_out = run_process([str(wrapper)], experiment_logs / f"training-{layout_name}-{workload_type}-{memory_condition['name']}-{index}.out", experiment_logs / f"training-{layout_name}-{workload_type}-{memory_condition['name']}-{index}.err", nested(config, "execution.cell_timeout_seconds"), memory=memory_condition, unit=f"training-{pid[:12]}-{index}")
         if timed_out or code: raise RuntimeError(f"training run failed for {layout_name}/{workload_type}/{memory_condition['name']}/{index}")
         subprocess.run([str(context["paths"]["residency_checker"]), str(layout["database"]), str(snapshot)], check=True)
+    print(f"[training] aggregating {layout_name}/{workload_type}/{memory_condition['name']}", file=sys.stderr, flush=True)
     subprocess.run([sys.executable, str(script), "--classification", str(layout["classification"]), "--snapshots", *map(str, sorted(snapshots.glob("*.csv"))), "--output-dir", str(target), "--layout", layout_name, "--database", str(layout["database"]), "--workload-type", workload_type, "--memory-condition-json", canonical_json(memory_condition).decode(), "--training-workloads", *[x["path"] for x in training]], check=True)
     return pid, target
 
@@ -429,11 +469,16 @@ def main() -> int:
     needs_training = any(v["strategy"] == "residency_topk" for v in context["variants"])
     profiles: dict[tuple[str, str, str], Path] = {}
     if needs_training:
+        profile_total = len(nested(config, "execution.layout_order")) * len(nested(config, "workloads.types")) * len(context["memory_conditions"])
+        profile_number = 0
         for layout_name in nested(config, "execution.layout_order"):
             for workload_type in nested(config, "workloads.types"):
                 for memory_condition in context["memory_conditions"]:
+                    profile_number += 1
+                    print(f"[training profiles {profile_number}/{profile_total}] {layout_name}/{workload_type}/{memory_condition['name']}", file=sys.stderr, flush=True)
                     pid, path = ensure_profile(profile_root, layout_name, workload_type, context["layouts"][layout_name], selected[workload_type]["training"], memory_condition, config, context, experiment_root / "logs")
                     profiles[(layout_name, workload_type, memory_condition["name"])] = path; manifest["profiles"][f"{layout_name}/{workload_type}/{memory_condition['name']}"] = {"profile_id": pid, "path": str(path), "memory_condition": memory_condition}
+        print(f"[training profiles] complete ({profile_total}/{profile_total})", file=sys.stderr, flush=True)
     atomic_json(experiment_root / "manifest.json", manifest)
     variants_by_order = sorted(context["variants"], key=lambda v: nested(config, "execution.strategy_order").index(v["strategy"]))
     variants_ordered = [v for v in variants_by_order if v["strategy"] == "baseline"] + [v for v in variants_by_order if v["strategy"] != "baseline"]
@@ -442,16 +487,21 @@ def main() -> int:
     baseline_variant = next(v for v in variants_ordered if v["strategy"] == "baseline")
     execution_units = [(baseline_variant, name, workload_type, memory_condition, None) for name in nested(config, "execution.layout_order") for workload_type in nested(config, "workloads.types") for memory_condition in context["memory_conditions"]]
     execution_units += [(variant, name, workload_type, memory_condition, backend) for name in nested(config, "execution.layout_order") for workload_type in nested(config, "workloads.types") for memory_condition in context["memory_conditions"] for variant in variants_ordered if variant["strategy"] != "baseline" for backend in backends]
+    repetitions = nested(config, "workloads.measurement.repetitions")
+    total_cells = sum(len(selected[workload_type]["measurement"]) * repetitions for _, _, workload_type, _, _ in execution_units)
+    progress = CellProgress(total_cells)
     for variant, layout_name, workload_type, memory_condition, backend in execution_units:
             for layout in (context["layouts"][layout_name],):
                 for workload in selected[workload_type]["measurement"]:
                     for repetition in range(1, nested(config, "workloads.measurement.repetitions") + 1):
+                        progress_label = f"{layout_name}/{workload_type}/{memory_condition['name']}/{strategy_key(variant)}/{backend or 'baseline'}/{workload['name']}/r{repetition}"
+                        progress.start(progress_label)
                         identity = {"database_sha256": layout["database_sha256"], "layout": layout_name, "training_workloads": [x["sha256"] for x in selected[workload_type]["training"]], "measurement_workload": workload["sha256"], **variant, "backend": backend, "pread_chunk_bytes": nested(config, "prefetch.pread_chunk_bytes"), "cold_protocol": config["cold_protocol"], "memory_condition": memory_condition, "repetition": repetition, "tools": manifest["tools"]}
                         cell_id = sha256_value(identity); cell_dir = experiment_root / "cells" / cell_id; cell_json = cell_dir / "cell.json"
                         if cell_json.is_file():
                             prior = read_json(cell_json)
                             if reusable_completed_cell(prior, cell_id, variant, memory_condition):
-                                raw_rows.append(prior["raw_result"]); continue
+                                raw_rows.append(prior["raw_result"]); progress.advance("skipped", progress_label); continue
                         cell_dir.mkdir(parents=True, exist_ok=True); operations = cell_dir / "operations.csv"; record_dir = cell_dir / "record"; record_dir.mkdir(exist_ok=True)
                         prefetch_result = selected_csv = None
                         if variant["strategy"] != "baseline":
@@ -478,7 +528,8 @@ def main() -> int:
                         raw = {key: "" for key in RAW_FIELDS}; raw.update({"experiment_id": nested(config, "experiment.id"), "cell_id": cell_id, "status": status, "layout": layout_name, "workload_type": workload_type, "memory_condition": memory_condition["name"], "memory_limit_enabled": memory_condition["enabled"], "memory_max_bytes": memory_condition["memory_max_bytes"] if memory_condition["memory_max_bytes"] is not None else "", "measurement_file": workload["name"], "repetition": repetition, "strategy": variant["strategy"], "variant": variant["variant"], "strategy_key": strategy_key(variant), "backend": backend, "n": variant["n"] if variant["n"] is not None else "", "interior_k": variant["interior_k"] if variant["interior_k"] is not None else "", "leaf_k": variant["leaf_k"] if variant["leaf_k"] is not None else ""})
                         if status == "completed": raw.update({"selected_interior": result_data.get("selected_interior_count", ""), "selected_leaf": result_data.get("selected_leaf_count", ""), "syscall_count": result_data.get("syscall_attempted_count", ""), "prefetch_elapsed_us": result_data.get("prefetch_elapsed_us", ""), "first_query_latency_us": metrics["first_query_latency_us"], "average_latency_us": metrics["average_latency_us"], "major_page_faults": metrics["major_page_faults"], "minor_page_faults": metrics["minor_page_faults"], "resident_after_cold_pages": metrics["resident_after_cold_pages"], "requested_selected_resident_ratio": requested if requested is not None else "", "successful_selected_resident_ratio": successful if successful is not None else ""})
                         cell = {"experiment_id": nested(config, "experiment.id"), "cell_id": cell_id, "status": status, "layout": layout_name, "database_sha256": layout["database_sha256"], "workload_type": workload_type, "memory_condition": memory_condition, "training_profile_sha256": sha256_file(profiles[(layout_name, workload_type, memory_condition["name"])] / "profile.json") if variant["strategy"] == "residency_topk" else None, "measurement_file": workload, "repetition": repetition, "strategy": variant, "backend": backend, "prefetch_result": result_data or None, "harness_metrics": metrics or None, "residency_metrics": {"requested_selected_resident_ratio": requested, "successful_selected_resident_ratio": successful}, "artifacts": {"run_record": str(record_path) if record_path else "", "operations_csv": str(operations), "prefetch_result_json": str(prefetch_result) if prefetch_result else None, "stdout": str(stdout_log), "stderr": str(stderr_log)}, "error": error, "timeout": timed_out, "raw_result": raw}
-                        atomic_json(cell_json, cell); raw_rows.append(raw)
+                        atomic_json(cell_json, cell); raw_rows.append(raw); progress.advance(status, progress_label)
+    progress.close()
     grouped_raw: dict[tuple[str, str, str, str | None, str], list[dict[str, Any]]] = {}
     variant_lookup = {(v["strategy"], v["variant"], str(v["n"] or ""), str(v["interior_k"] if v["interior_k"] is not None else ""), str(v["leaf_k"] if v["leaf_k"] is not None else "")): v for v in context["variants"]}
     for row in raw_rows:
@@ -491,10 +542,14 @@ def main() -> int:
         output.parent.mkdir(parents=True, exist_ok=True)
         with output.open("w", newline="", encoding="utf-8") as handle:
             writer = csv.DictWriter(handle, fieldnames=RAW_FIELDS, extrasaction="ignore"); writer.writeheader(); writer.writerows(rows)
+    print("[postprocess 1/3] summarizing results", file=sys.stderr, flush=True)
     subprocess.run([sys.executable, str(Path(__file__).with_name("summarize_results.py")), "--experiment-dir", str(experiment_root)], check=True)
+    print("[postprocess 2/3] plotting trade-off", file=sys.stderr, flush=True)
     subprocess.run([sys.executable, str(Path(__file__).with_name("plot_tradeoff.py")), "--experiment-dir", str(experiment_root)], check=True)
+    print("[postprocess 3/3] generating report", file=sys.stderr, flush=True)
     subprocess.run([sys.executable, str(Path(__file__).with_name("generate_report.py")), "--experiment-dir", str(experiment_root)], check=True)
     atomic_json(experiment_root / "state.json", {"status": "completed", "cell_count": len(raw_rows), "completed": sum(r["status"] == "completed" for r in raw_rows), "failed": sum(r["status"] != "completed" for r in raw_rows), "updated_at": time.time()})
+    print(f"[experiment] complete: {experiment_root}", file=sys.stderr, flush=True)
     return 0
 
 

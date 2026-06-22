@@ -364,6 +364,15 @@ python3 tools/src/orchestrator.py \
 
 Orchestrator 會先完成完整 preflight。Config、工具、layout、metadata、workload、strategy或檔案可執行狀態不合法時，experiment不會開始，也不會建立experiment目錄。Preflight只確認drop-cache helper存在且可執行；`sudo -n`授權與實際清除cache能力必須用前述probe另行確認。
 
+執行期間會將進度寫至stderr：training階段顯示profile組合及每份snapshot是執行或重用；measurement階段顯示完成數、總cell數、百分比，以及`completed`、`skipped`、`failed`、`timeout`累計。互動式終端會原地更新；redirect或非TTY環境約每1%輸出一行，failed與timeout則立即輸出。最後會顯示summary、plot與report三個後處理階段。
+
+若要保留進度紀錄：
+
+```bash
+python3 tools/src/orchestrator.py --config configs/formal-experiment.json \
+  2>&1 | tee formal-experiment-progress.log
+```
+
 #### 測試 memory limit 執行路徑
 
 Canonical `smoke.json`依規格固定停用memory limit。若要驗證systemd scope與`MemoryMax`能否正常運作，使用獨立的`memory-limit-smoke.json`，避免改動或污染一般smoke結果。

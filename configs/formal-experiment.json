@@ -43,12 +43,14 @@
       },
       {
         "name": "residency_topk",
-        "variants": [
-          {"label": "i5_l0", "interior_k": 5, "leaf_k": 0},
-          {"label": "i5_l5", "interior_k": 5, "leaf_k": 5},
-          {"label": "i10_l0", "interior_k": 10, "leaf_k": 0},
-          {"label": "i10_l10", "interior_k": 10, "leaf_k": 10}
-        ]
+        "sweep": {
+          "interior_k": {
+            "range": {"start": 0, "end_exclusive": 11, "step": 1}
+          },
+          "leaf_k": {
+            "range": {"start": 0, "end_exclusive": 11, "step": 1}
+          }
+        }
       }
     ]
   },
