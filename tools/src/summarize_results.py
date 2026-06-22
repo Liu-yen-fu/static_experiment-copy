@@ -133,7 +133,20 @@ def configured_strategy_keys(config: dict[str, object]) -> list[str]:
                 spec = sweep["range"]; values = range(spec["start"], spec["end_exclusive"], spec["step"])
             keys.extend(f"offset_topk_interior_n{value}" for value in values)
         else:
-            for value in item["variants"]:
+            if "variants" in item:
+                values = item["variants"]
+            else:
+                def axis_values(axis: dict[str, object]) -> list[int]:
+                    if "values" in axis:
+                        return axis["values"]
+                    spec = axis["range"]
+                    return list(range(spec["start"], spec["end_exclusive"], spec["step"]))
+                sweep = item["sweep"]
+                values = [{"label": "sweep", "interior_k": ik, "leaf_k": lk}
+                          for ik in axis_values(sweep["interior_k"])
+                          for lk in axis_values(sweep["leaf_k"])
+                          if ik != 0 or lk != 0]
+            for value in values:
                 label = str(value.get("label", f"interior{value['interior_k']}_leaf{value['leaf_k']}")).lower()
                 safe = re.sub(r"[^a-z0-9_-]+", "-", label).strip("-_") or "variant"
                 keys.append(f"residency_topk_{safe}_i{value['interior_k']}_l{value['leaf_k']}")

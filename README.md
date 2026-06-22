@@ -152,7 +152,7 @@ configs/smoke.json
 - `layouts`：列出本次啟用的layout及其database、classification與metadata。
 - `workloads`：設定workload types、sampling seed、training/measurement pools、抽樣數量與repetitions。
 - `prefetch.backends`：有序backend陣列；目前支援`madvise`與`pread`。Baseline不屬於任何backend，只執行一次。
-- `prefetch.strategies`：明確列出baseline與所有N/K variants。
+- `prefetch.strategies`：列出baseline及N/K variants；K可明列或以sweep規則展開。
 - `cold_protocol`：正式設定固定為`none`、`before-cold`、`before-cold`。
 - `memory_conditions`：有序條件陣列；第一個條件是memory comparison reference。
 - `execution`：layout、strategy順序及cell timeout。
@@ -304,6 +304,24 @@ Strategy可用格式：
 ```
 
 `interior_k`與`leaf_k`必須是非負整數，不得超過對應eligible page count，且兩者不得同時為0。`label`會成為filesystem-safe strategy key的一部分，建議只使用小寫英文字母、數字、`-`與`_`。
+
+`residency_topk`也可使用`sweep`自動建立K矩陣；`interior_k`與`leaf_k`各自接受`values`或`range`：
+
+```json
+{
+  "name": "residency_topk",
+  "sweep": {
+    "interior_k": {"values": [0, 5, 10]},
+    "leaf_k": {
+      "range": {"start": 0, "end_exclusive": 11, "step": 5}
+    }
+  }
+}
+```
+
+上述設定依interior外層、leaf內層展開Cartesian product：`0/5`、`0/10`、`5/0`、`5/5`、`5/10`、`10/0`、`10/5`、`10/10`。`0/0`由baseline代表，因此自動略過。`variants`與`sweep`必須擇一；每個axis的`values`與`range`也必須擇一。Values不得為空或重複；range使用非負`start`、大於start的`end_exclusive`與正整數`step`。展開後每個K仍不得超過所有enabled layouts對應的eligible page count。
+
+Sweep產生的strategy key格式為`residency_topk_sweep_i<interior-k>_l<leaf-k>`，例如`residency_topk_sweep_i5_l10`。
 
 若要建立自訂experiment，先複製config並修改ID：
 

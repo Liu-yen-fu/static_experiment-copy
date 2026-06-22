@@ -97,6 +97,30 @@ def read_classification(path: Path, page_size: int, page_count: int) -> tuple[in
     return interior, leaf
 
 
+def sweep_values(spec: Any, field: str) -> list[int]:
+    if not isinstance(spec, dict) or ("values" in spec) == ("range" in spec):
+        raise ValueError(f"{field} requires exactly one of values/range")
+    if set(spec) - {"values", "range"}:
+        raise ValueError(f"{field} contains unknown fields")
+    if "values" in spec:
+        values = spec["values"]
+        if not isinstance(values, list) or not values:
+            raise ValueError(f"{field}.values must be a nonempty array")
+    else:
+        range_spec = spec["range"]
+        if not isinstance(range_spec, dict) or set(range_spec) != {"start", "end_exclusive", "step"}:
+            raise ValueError(f"{field}.range requires start, end_exclusive, and step")
+        start, end, step = (range_spec[key] for key in ("start", "end_exclusive", "step"))
+        if any(not isinstance(value, int) or isinstance(value, bool) for value in (start, end, step)) or start < 0 or end <= start or step <= 0:
+            raise ValueError(f"{field}.range must use nonnegative bounds, end_exclusive > start, and a positive step")
+        values = list(range(start, end, step))
+    if any(not isinstance(value, int) or isinstance(value, bool) or value < 0 for value in values):
+        raise ValueError(f"{field} values must be nonnegative integers")
+    if len(values) != len(set(values)):
+        raise ValueError(f"{field} values must not contain duplicates")
+    return values
+
+
 def variants(config: dict[str, Any]) -> list[dict[str, Any]]:
     result = []
     strategies = nested(config, "prefetch.strategies", list)
@@ -107,17 +131,34 @@ def variants(config: dict[str, Any]) -> list[dict[str, Any]]:
         if name in {"baseline", "range_interior"}:
             result.append({"strategy": name, "variant": name, "n": None, "interior_k": None, "leaf_k": None})
         elif name == "offset_topk_interior":
-            sweep = item.get("n")
-            if not isinstance(sweep, dict) or ("values" in sweep) == ("range" in sweep): raise ValueError("offset_topk_interior.n requires exactly one of values/range")
-            if "values" in sweep: values = sweep["values"]
-            else:
-                spec = sweep["range"]
-                values = list(range(spec["start"], spec["end_exclusive"], spec["step"]))
+            values = sweep_values(item.get("n"), "offset_topk_interior.n")
             for value in values: result.append({"strategy": name, "variant": f"n{value}", "n": value, "interior_k": None, "leaf_k": None})
         else:
-            for value in item.get("variants", []):
-                ik, lk = value.get("interior_k"), value.get("leaf_k")
-                result.append({"strategy": name, "variant": value.get("label", f"interior{ik}_leaf{lk}"), "n": None, "interior_k": ik, "leaf_k": lk})
+            has_variants, has_sweep = "variants" in item, "sweep" in item
+            if has_variants == has_sweep:
+                raise ValueError("residency_topk requires exactly one of variants/sweep")
+            if has_variants:
+                explicit = item["variants"]
+                if not isinstance(explicit, list) or not explicit or any(not isinstance(value, dict) for value in explicit):
+                    raise ValueError("residency_topk.variants must be a nonempty array of objects")
+                for value in explicit:
+                    ik, lk = value.get("interior_k"), value.get("leaf_k")
+                    result.append({"strategy": name, "variant": value.get("label", f"interior{ik}_leaf{lk}"), "n": None, "interior_k": ik, "leaf_k": lk})
+            else:
+                sweep = item["sweep"]
+                if not isinstance(sweep, dict) or set(sweep) != {"interior_k", "leaf_k"}:
+                    raise ValueError("residency_topk.sweep requires exactly interior_k and leaf_k")
+                interior_values = sweep_values(sweep["interior_k"], "residency_topk.sweep.interior_k")
+                leaf_values = sweep_values(sweep["leaf_k"], "residency_topk.sweep.leaf_k")
+                generated = 0
+                for ik in interior_values:
+                    for lk in leaf_values:
+                        if ik == 0 and lk == 0:
+                            continue
+                        result.append({"strategy": name, "variant": "sweep", "n": None, "interior_k": ik, "leaf_k": lk})
+                        generated += 1
+                if not generated:
+                    raise ValueError("residency_topk.sweep expands only to 0/0, which is represented by baseline")
     return result
 
 

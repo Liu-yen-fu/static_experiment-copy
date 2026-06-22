@@ -512,7 +512,29 @@ interior_k=92, leaf_k=40
 interior_k=92, leaf_k=92
 ```
 
-不使用 ratio 或 rounding 規則。
+`residency_topk`必須支援兩種互斥格式：明列`variants`，或使用`sweep`建立Cartesian-product K矩陣。
+
+Sweep格式固定為：
+
+```json
+{
+  "name": "residency_topk",
+  "sweep": {
+    "interior_k": {"values": [0, 5, 10]},
+    "leaf_k": {
+      "range": {
+        "start": 0,
+        "end_exclusive": 11,
+        "step": 5
+      }
+    }
+  }
+}
+```
+
+`interior_k`為外層、`leaf_k`為內層，依陣列或range順序展開。每個axis必須恰好提供`values`或`range`之一：`values`必須為非空、無重複的非負整數陣列；`range`必須恰好包含非負整數`start`、大於start的`end_exclusive`與正整數`step`。`0/0`組合由baseline代表，sweep展開時必須自動略過；若略過後沒有任何組合，preflight必須失敗。
+
+每個自動展開variant的label固定為`sweep`，並依既有strategy-key規則形成例如`residency_topk_sweep_i5_l10`。展開後仍須對每個enabled layout驗證K上限。不得使用ratio或rounding規則。
 
 ## 10. Prefetch Backend
 
@@ -1055,7 +1077,7 @@ pread_chunk_bytes
 strategies
 ```
 
-每個 strategy 的所有 N/K/variant 必須明確列出。
+每個strategy的N/K/variant必須由config明確決定；`residency_topk`的K可由第9.4節定義的deterministic sweep展開，不得使用未記錄的隱式矩陣。
 
 ### 16.5 Memory Conditions
 

@@ -1,0 +1,62 @@
+{
+  "schema_version": 1,
+  "experiment": {"id": "formal-experiment", "output_root": "../experiments", "resume": true},
+  "paths": {
+    "workloads_directory": "../data/workloads",
+    "benchmark_harness": "../tools/bin/benchmark_harness",
+    "prefetch_runner": "../tools/bin/prefetch_runner",
+    "classify_pages": "../tools/bin/classify_pages",
+    "residency_checker": "../tools/bin/residency_checker",
+    "drop_caches_script": "/usr/local/sbin/drop-caches"
+  },
+  "layouts": {
+    "original": {
+      "database": "../data/layouts/original/database.db",
+      "classification": "../data/layouts/original/classify.csv",
+      "metadata": "../data/layouts/original/metadata.json"
+    },
+    "vacuum": {
+      "database": "../data/layouts/vacuum/database.db",
+      "classification": "../data/layouts/vacuum/classify.csv",
+      "metadata": "../data/layouts/vacuum/metadata.json"
+    },
+    "rewrite": {
+      "database": "../data/layouts/rewrite/database.db",
+      "classification": "../data/layouts/rewrite/classify.csv",
+      "metadata": "../data/layouts/rewrite/metadata.json"
+    }
+  },
+  "workloads": {
+    "types": ["read_zipf_full", "read_zipf_tail", "read_uniform_full", "read_uniform_tail","scan_zipf_full", "scan_zipf_tail", "scan_uniform_full", "scan_uniform_tail"], "sampling_seed": 20250620,
+    "training": {"pool_start": 1, "pool_end_inclusive": 25, "count": 5},
+    "measurement": {"pool_start": 26, "pool_end_inclusive": 50, "count": 15, "repetitions": 10}
+  },
+  "prefetch": {
+    "backends": ["madvise", "pread"], "pread_chunk_bytes": 1048576,
+    "strategies": [
+      {"name": "baseline"}, {"name": "range_interior"},
+      {
+        "name": "offset_topk_interior",
+        "n": {
+          "range": {"start": 1, "end_exclusive": 93, "step": 1}
+        }
+      },
+      {
+        "name": "residency_topk",
+        "variants": [
+          {"label": "i5_l0", "interior_k": 5, "leaf_k": 0},
+          {"label": "i5_l5", "interior_k": 5, "leaf_k": 5},
+          {"label": "i10_l0", "interior_k": 10, "leaf_k": 0},
+          {"label": "i10_l10", "interior_k": 10, "leaf_k": 10}
+        ]
+      }
+    ]
+  },
+  "cold_protocol": {"cold_advice": "none", "sqlite_open_timing": "before-cold", "schema_init_timing": "before-cold", "drop_caches_use_sudo": false},
+  "memory_conditions": [
+    {"name": "unlimited", "enabled": false},
+    {"name": "20m", "enabled": true, "memory_max": "20MiB"}
+  ],
+  "execution": {"layout_order": ["original", "vacuum", "rewrite"], "strategy_order": ["baseline", "range_interior", "offset_topk_interior", "residency_topk"], "cell_timeout_seconds": 60},
+  "statistics": {"percentiles": [25, 50, 75, 99], "percentile_method": "nearest_rank"}
+}
