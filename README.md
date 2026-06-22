@@ -355,6 +355,10 @@ editor configs/my_experiment.json
 python3 -m json.tool configs/my_experiment.json >/dev/null
 ```
 
+#### Formal experiment設定
+
+`configs/formal-experiment.json`提供三種layouts、八種read/scan workload types、兩種memory conditions與全部strategy類型的正式矩陣。它使用5份measurement workloads、3次repetitions、8個offset N值及15個residency K組合，共35,280個measurement cells，另有240次training runs。此設定會大量呼叫全系統drop-cache helper，只應在工作站允許的時段執行。K=92必須由preflight確認不超過三種layout的eligible page count。
+
 ### 4. 執行 multi-backend smoke experiment
 
 ```bash
