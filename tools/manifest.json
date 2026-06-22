@@ -1,0 +1,5 @@
+{
+  "schema_version": 1,
+  "cjson": {"version": "1.7.19", "upstream": "https://github.com/DaveGamble/cJSON", "license": "MIT"},
+  "sqlite": {"format": "amalgamation", "files": ["vendor/sqlite/sqlite3.c", "vendor/sqlite/sqlite3.h", "vendor/sqlite/sqlite3ext.h"]}
+}

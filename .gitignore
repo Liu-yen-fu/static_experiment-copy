@@ -1,0 +1,7 @@
+tools/bin/*
+tools/src/__pycache__/
+*.py[cod]
+experiments/
+data/layouts/
+data/training_profiles/
+data/source/database.db

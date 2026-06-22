@@ -1,0 +1,35 @@
+{
+  "schema_version": 1,
+  "experiment": {"id": "memory-limit-smoke", "output_root": "../experiments", "resume": true},
+  "paths": {
+    "workloads_directory": "../data/workloads",
+    "benchmark_harness": "../tools/bin/benchmark_harness",
+    "prefetch_runner": "../tools/bin/prefetch_runner",
+    "classify_pages": "../tools/bin/classify_pages",
+    "residency_checker": "../tools/bin/residency_checker",
+    "drop_caches_script": "/usr/local/sbin/static-experiment-drop-caches"
+  },
+  "layouts": {
+    "original": {"database": "../data/layouts/original/database.db", "classification": "../data/layouts/original/classify.csv", "metadata": "../data/layouts/original/metadata.json"}
+  },
+  "workloads": {
+    "types": ["read_zipf_full"], "sampling_seed": 20250620,
+    "training": {"pool_start": 1, "pool_end_inclusive": 25, "count": 5},
+    "measurement": {"pool_start": 26, "pool_end_inclusive": 50, "count": 5, "repetitions": 1}
+  },
+  "prefetch": {
+    "backends": ["madvise", "pread"], "pread_chunk_bytes": 1048576,
+    "strategies": [
+      {"name": "baseline"}, {"name": "range_interior"},
+      {"name": "offset_topk_interior", "n": {"values": [5]}},
+      {"name": "residency_topk", "variants": [{"label": "interior5_leaf0", "interior_k": 5, "leaf_k": 0}, {"label": "interior5_leaf5", "interior_k": 5, "leaf_k": 5}]}
+    ]
+  },
+  "cold_protocol": {"cold_advice": "none", "sqlite_open_timing": "before-cold", "schema_init_timing": "before-cold", "drop_caches_use_sudo": true},
+  "memory_conditions": [
+    {"name": "unlimited", "enabled": false},
+    {"name": "512m", "enabled": true, "memory_max": "512MiB"}
+  ],
+  "execution": {"layout_order": ["original"], "strategy_order": ["baseline", "range_interior", "offset_topk_interior", "residency_topk"], "cell_timeout_seconds": 180},
+  "statistics": {"percentiles": [25, 50, 75, 99], "percentile_method": "nearest_rank"}
+}
