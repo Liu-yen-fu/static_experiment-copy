@@ -15,7 +15,7 @@
 - 一支由執行環境提供、可非互動呼叫且符合下述契約的drop-cache helper；它可以是本機安裝的root-owned副本，也可以是工作站管理者提供的另一支helper。
 - 若啟用 memory limit，系統必須提供可用的 `systemd --user` session，以及 `systemd-run`、`systemctl`。
 - Trade-off圖建議安裝Python `matplotlib`以取得完整座標、圖例與並排子圖；未安裝時會依序使用Pillow或內建最小PNG fallback。
-- 專案已附帶 canonical SQLite database：`data/source/database.db`。
+- 專案附帶 canonical SQLite database builder：`data/source/source_db_builder.py`。
 
 Drop-cache動作最終需要足夠權限，但執行實驗的帳號本身不必擁有root權限。Helper必須不接受參數、可非互動執行、成功時exit 0，並完成等效於`sync`後將`3`寫入`/proc/sys/vm/drop_caches`的動作。
 
