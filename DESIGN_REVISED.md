@@ -33,6 +33,7 @@ static_experiment/
 │  │  ├─ classify_pages.c
 │  │  ├─ common.py
 │  │  ├─ drop_caches.sh
+│  │  ├─ find_significant_effects.py
 │  │  ├─ generate_report.py
 │  │  ├─ layout_rewriter.c
 │  │  ├─ orchestrator.py
@@ -72,6 +73,8 @@ static_experiment/
       ├─ cells/
       ├─ logs/
       ├─ plots/
+      ├─ significant_effects.csv
+      ├─ significant_effects.md
       ├─ report.md
       └─ results/
          ├─ all_raw.csv
@@ -187,7 +190,16 @@ python3 tools/src/build_layouts.py \
 - 每個configured backend與workload type組合各一份`plots/tradeoff_<backend>_<workload-type>.png`
 - `plots/tradeoff_points.csv`
 
-### 3.7 `generate_report.py`
+### 3.7 `find_significant_effects.py`
+
+負責以純Python標準函式庫從`results/all_raw.csv`產生：
+
+- `significant_effects.csv`
+- `significant_effects.md`
+
+統計方法必須符合第25.3節的顯著效果契約。
+
+### 3.8 `generate_report.py`
 
 負責讀取experiment config、manifest、分類式results、cell狀態與trade-off artifacts，產生人類可直接閱讀的：
 
@@ -1207,7 +1219,7 @@ Orchestrator必須將人類可讀進度寫至stderr，不得混入cell stdout ar
 - Resume跳過的completed cell計入done與skipped，不重複計入本次執行的completed。
 - Failed與timeout必須立即顯示，但仍繼續後續cells。
 - 互動式TTY可原地更新；非TTY輸出應節流至約每1%一行，並在最後一個cell強制輸出。
-- Result summary、trade-off plot與report generation必須各自顯示後處理階段進度。
+- Result summary、significant effects analysis、trade-off plot與report generation必須各自顯示後處理階段進度。
 
 進度輸出只供操作觀察，不屬於canonical experiment artifacts，亦不得參與cell identity或統計結果。
 
@@ -1599,6 +1611,7 @@ experiments/<experiment-id>/report.md
 實驗摘要
 執行環境
 最佳layout / strategy / backend組合
+統計顯著效果
 各workload type結果
 Layout比較
 各layout的strategy比較
@@ -1649,7 +1662,33 @@ Prefetch P25–P75
 
 Baseline沒有backend，必須以`—`表示。若某個組合缺少可用metric，必須顯示`N/A`，不得填入推測值。此推薦表只負責提供快速結論；完整distribution仍由各summary與comparison CSV保留。
 
-### 25.3 Layout 比較表
+### 25.3 統計顯著效果
+
+後處理必須以純Python標準函式庫實作統計顯著效果摘要，不得要求SciPy、pandas或statsmodels。輸出：
+
+```text
+experiments/<experiment-id>/significant_effects.csv
+experiments/<experiment-id>/significant_effects.md
+```
+
+`find_significant_effects.py`必須從`results/all_raw.csv`讀取已完成cells，以paired design比較下列效果：
+
+- 非baseline strategy vs same-layout baseline。
+- 非reference backend vs config中第一個backend。
+- 非reference memory condition vs config中第一個memory condition。
+
+比較至少涵蓋下列metrics：
+
+```text
+effective_first_query_latency_us
+effective_average_query_latency_us
+average_latency_us
+major_page_faults
+```
+
+每個效果必須計算paired median difference、mean difference、bootstrap 95% CI、exact sign-test p-value、Benjamini-Hochberg FDR q-value、win/loss/tie與direction。差值定義為`candidate - reference`；對latency與page fault指標而言，負值代表candidate較好。Markdown report必須嵌入`significant_effects.md`摘要；若尚未產生，必須提供可執行的產生命令，而不是讓report generation失敗。
+
+### 25.4 Layout 比較表
 
 每個workload type與memory condition必須產生一個layout baseline比較表。表格至少包含：
 
@@ -1663,7 +1702,7 @@ Average-query latency median
 Average-query improvement vs original
 ```
 
-### 25.4 Strategy 比較表
+### 25.5 Strategy 比較表
 
 每個workload type、layout、memory condition與backend必須產生一個strategy比較表。表格至少包含：
 
@@ -1700,7 +1739,7 @@ requested_selected_resident_ratio
 successful_selected_resident_ratio
 ```
 
-### 25.5 Backend 比較表
+### 25.6 Backend 比較表
 
 Config列出多個backends時，每個workload type、layout與memory condition必須產生backend比較表。表格至少包含：
 
@@ -1723,7 +1762,7 @@ Successful selected resident ratio
 
 報告必須標示`madvise`的prefetch cost為非同步request submission時間，`pread`的prefetch cost為同步read完成時間。
 
-### 25.6 Memory Condition 比較表
+### 25.7 Memory Condition 比較表
 
 Config列出多個memory conditions時，每個workload type與layout必須產生memory condition比較表。表格至少包含：
 
@@ -1744,7 +1783,7 @@ Effective average-query change vs reference condition
 
 報告必須標示config中第一個memory condition為reference condition。
 
-### 25.7 Trade-off
+### 25.8 Trade-off
 
 Markdown報告必須依config中的backend順序，再依workload type順序嵌入每張圖：
 
@@ -1870,8 +1909,9 @@ total: 45 cells
 - Original layout目錄產生`memory_comparison.csv`。
 - `read_zipf_full/layout_comparisons/unlimited.csv`產生成功。
 - First-query、effective first-query與average-query improvement可計算。
-- Trade-off CSV與config中每個backend對應的PNG產生成功。
-- `report.md`產生成功且包含實驗摘要、執行環境、layout比較、per-memory-condition與per-backend strategy比較、backend比較、memory condition比較、first-query與average-query latency、trade-off圖、cell狀態、workload清單與artifact連結。
+- Trade-off CSV與config中每個backend/workload type對應的PNG產生成功。
+- `significant_effects.csv`與`significant_effects.md`產生成功。
+- `report.md`產生成功且包含實驗摘要、執行環境、最佳組合推薦、統計顯著效果、layout比較、per-memory-condition與per-backend strategy比較、backend比較、memory condition比較、first-query與average-query latency、trade-off圖、cell狀態、workload清單與artifact連結。
 - 相同config重跑時不得重新抽樣、重新training或重跑completed cells。
 - Smoke不要求任何prefetch策略必須優於baseline。
 

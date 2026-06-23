@@ -368,7 +368,7 @@ python3 tools/src/orchestrator.py \
 
 Orchestrator 會先完成完整 preflight。Config、工具、layout、metadata、workload、strategy或檔案可執行狀態不合法時，experiment不會開始，也不會建立experiment目錄。Preflight只確認drop-cache helper存在且可執行；`sudo -n`授權與實際清除cache能力必須用前述probe另行確認。
 
-執行期間會將進度寫至stderr：training階段顯示profile組合及每份snapshot是執行或重用；measurement階段顯示完成數、總cell數、百分比，以及`completed`、`skipped`、`failed`、`timeout`累計。互動式終端會原地更新；redirect或非TTY環境約每1%輸出一行，failed與timeout則立即輸出。最後會顯示summary、plot與report三個後處理階段。
+執行期間會將進度寫至stderr：training階段顯示profile組合及每份snapshot是執行或重用；measurement階段顯示完成數、總cell數、百分比，以及`completed`、`skipped`、`failed`、`timeout`累計。互動式終端會原地更新；redirect或非TTY環境約每1%輸出一行，failed與timeout則立即輸出。最後會顯示summary、significant effects、plot與report四個後處理階段。
 
 若要保留進度紀錄：
 
@@ -434,6 +434,8 @@ logs/
 plots/tradeoff_madvise_read_zipf_full.png
 plots/tradeoff_pread_read_zipf_full.png
 plots/tradeoff_points.csv
+significant_effects.csv
+significant_effects.md
 report.md
 results/all_raw.csv
 results/read_zipf_full/layout_comparisons/unlimited.csv
@@ -515,6 +517,7 @@ results/<workload-type>/layout_comparisons/<memory-condition>.csv
 - `backend_comparison.csv`：同一layout與memory condition下跨madvise/pread比較。
 - `memory_comparison.csv`：相同layout、strategy、backend在所有memory conditions間做paired比較。
 - `layout_comparisons/<memory-condition>.csv`：只使用該memory condition的backend-neutral baseline比較layouts。
+- `significant_effects.csv` / `significant_effects.md`：純Python paired統計分析，列出FDR校正後仍顯著且bootstrap 95% CI不跨0的效果。
 - `tradeoff_<backend>_<workload-type>.png`：只包含該backend與該workload type點位的trade-off圖；formal experiment會因此拆成多張較容易閱讀的圖。
 - `tradeoff_points.csv`：所有backend的trade-off實際點位與P25–P75；`backend`欄位保留分類。
 - Trade-off圖以memory condition分成並排子圖，X軸使用log scale，Y軸依P25–P75範圍自動縮放；點位為median，水平與垂直線分別為兩軸的P25–P75 error bars。
@@ -546,10 +549,15 @@ Report另會針對每個`workload type × memory condition`組合列出最佳lay
 
 Baseline沒有backend，表中以`—`表示。這兩張表是快速判斷 formal experiment 結論的入口；若兩個視角選出的組合不同，代表「整體平均成本」與「cold-start第一筆體感」存在取捨。
 
+Report也會嵌入統計顯著效果摘要。`find_significant_effects.py`不依賴SciPy、pandas或statsmodels；它從`results/all_raw.csv`進行paired comparison，計算paired median difference、bootstrap 95% CI、exact sign-test p-value與Benjamini-Hochberg FDR q-value。差值定義為`candidate - reference`；對latency與page fault指標而言，負值代表candidate較好。
+
+預設使用`--alpha 0.05`、`--min-pairs 5`與`--bootstrap-iterations 1000`；若需要更嚴格的bootstrap CI，可手動提高iterations。
+
 若要替既有experiment重新產生包含新指標的summary與report，先確認該experiment已有完整classified raw results與plots，再執行：
 
 ```bash
 python3 tools/src/summarize_results.py --experiment-dir experiments/<experiment-id>
+python3 tools/src/find_significant_effects.py --experiment-dir experiments/<experiment-id>
 python3 tools/src/generate_report.py --experiment-dir experiments/<experiment-id>
 ```
 

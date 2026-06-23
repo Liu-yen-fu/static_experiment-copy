@@ -195,6 +195,29 @@ def append_best_combo_section(lines: list[str], config: dict[str, Any], results_
     )
 
 
+def append_significant_effects_section(lines: list[str], root: Path) -> None:
+    summary = root / "significant_effects.md"
+    csv_path = root / "significant_effects.csv"
+    lines += ["", "## 統計顯著效果", ""]
+    if not summary.is_file():
+        lines += [
+            "尚未產生統計顯著效果摘要。若要產生，請執行：",
+            "",
+            "```bash",
+            "python3 tools/src/find_significant_effects.py --experiment-dir experiments/<experiment-id>",
+            "```",
+            "",
+        ]
+        return
+    text = summary.read_text(encoding="utf-8")
+    body = "\n".join(text.splitlines()[2:]).strip()
+    if body:
+        lines += body.splitlines()
+        lines.append("")
+    if csv_path.is_file():
+        lines.append(f"- {link('Significant effects CSV', csv_path, root)}")
+
+
 def generate(root: Path) -> str:
     config = read_json(root / "config.json")
     manifest = read_json(root / "manifest.json")
@@ -225,6 +248,7 @@ def generate(root: Path) -> str:
     ])
     results_root = root / "results"
     append_best_combo_section(lines, config, results_root)
+    append_significant_effects_section(lines, root)
     lines += ["", "## 各 workload type 結果", ""]
     for workload_type in workloads["types"]:
         workload_root = results_root / workload_type
@@ -311,6 +335,10 @@ def generate(root: Path) -> str:
         for layout in config["execution"]["layout_order"]:
             lines.append(f"- {link(f'{workload_type}/{layout} memory comparison', workload_root / layout / 'memory_comparison.csv', root)}")
     lines.append(f"- {link('Trade-off data', points_path, root)}")
+    if (root / "significant_effects.csv").is_file():
+        lines.append(f"- {link('Significant effects CSV', root / 'significant_effects.csv', root)}")
+    if (root / "significant_effects.md").is_file():
+        lines.append(f"- {link('Significant effects Markdown', root / 'significant_effects.md', root)}")
     return "\n".join(lines) + "\n"
 
 
