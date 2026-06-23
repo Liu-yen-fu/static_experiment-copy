@@ -38,17 +38,17 @@
       {
         "name": "offset_topk_interior",
         "n": {
-          "values": [1, 5, 10, 20, 40, 60, 80, 92]
+          "values": [1, 5, 10, 20, 40, 60, 80]
         }
       },
       {
         "name": "residency_topk",
         "sweep": {
           "interior_k": {
-            "values": [0, 5, 20, 92]
+            "values": [0, 5, 20, 80]
           },
           "leaf_k": {
-            "values": [0, 5, 20, 92]
+            "values": [0, 5, 20, 80]
           }
         }
       }
