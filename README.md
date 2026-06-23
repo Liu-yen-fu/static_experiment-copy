@@ -517,7 +517,7 @@ results/<workload-type>/layout_comparisons/<memory-condition>.csv
 - `backend_comparison.csv`：同一layout與memory condition下跨madvise/pread比較。
 - `memory_comparison.csv`：相同layout、strategy、backend在所有memory conditions間做paired比較。
 - `layout_comparisons/<memory-condition>.csv`：只使用該memory condition的backend-neutral baseline比較layouts。
-- `significant_effects.csv` / `significant_effects.md`：純Python paired統計分析，列出FDR校正後仍顯著且bootstrap 95% CI不跨0的效果。
+- `significant_effects.csv` / `significant_effects.md`：純Python paired統計分析；CSV保留通過門檻的效果，Markdown針對每個workload type與memory condition列出最佳layout/backend/strategy組合及其顯著性。
 - `tradeoff_<backend>_<workload-type>.png`：只包含該backend與該workload type點位的trade-off圖；formal experiment會因此拆成多張較容易閱讀的圖。
 - `tradeoff_points.csv`：所有backend的trade-off實際點位與P25–P75；`backend`欄位保留分類。
 - Trade-off圖以memory condition分成並排子圖，X軸使用log scale，Y軸依P25–P75範圍自動縮放；點位為median，水平與垂直線分別為兩軸的P25–P75 error bars。
@@ -549,7 +549,7 @@ Report另會針對每個`workload type × memory condition`組合列出最佳lay
 
 Baseline沒有backend，表中以`—`表示。這兩張表是快速判斷 formal experiment 結論的入口；若兩個視角選出的組合不同，代表「整體平均成本」與「cold-start第一筆體感」存在取捨。
 
-Report也會嵌入統計顯著效果摘要。`find_significant_effects.py`不依賴SciPy、pandas或statsmodels；它從`results/all_raw.csv`進行paired comparison，計算paired median difference、bootstrap 95% CI、exact sign-test p-value與Benjamini-Hochberg FDR q-value。差值定義為`candidate - reference`；對latency與page fault指標而言，負值代表candidate較好。
+Report也會嵌入統計顯著效果摘要。`find_significant_effects.py`不依賴SciPy、pandas或statsmodels；它從`results/all_raw.csv`進行paired comparison，只檢查`effective_first_query_latency_us`與`effective_average_query_latency_us`。Markdown摘要針對每個`workload type × memory condition × metric`選出median latency最低的layout/backend/strategy組合，並檢查它相對`original baseline`是否顯著。CSV則保留通過門檻的paired effects。差值定義為`candidate - reference`；對latency指標而言，負值代表candidate較好。
 
 預設使用`--alpha 0.05`、`--min-pairs 5`與`--bootstrap-iterations 1000`；若需要更嚴格的bootstrap CI，可手動提高iterations。
 

@@ -1671,8 +1671,9 @@ experiments/<experiment-id>/significant_effects.csv
 experiments/<experiment-id>/significant_effects.md
 ```
 
-`find_significant_effects.py`必須從`results/all_raw.csv`讀取已完成cells，以paired design比較下列效果：
+`find_significant_effects.py`必須從`results/all_raw.csv`讀取已完成cells，只針對effective latency metrics進行paired design比較。比較類型包含：
 
+- 最佳layout/backend/strategy combination vs original baseline。
 - 非baseline strategy vs same-layout baseline。
 - 非reference backend vs config中第一個backend。
 - 非reference memory condition vs config中第一個memory condition。
@@ -1682,11 +1683,9 @@ experiments/<experiment-id>/significant_effects.md
 ```text
 effective_first_query_latency_us
 effective_average_query_latency_us
-average_latency_us
-major_page_faults
 ```
 
-每個效果必須計算paired median difference、mean difference、bootstrap 95% CI、exact sign-test p-value、Benjamini-Hochberg FDR q-value、win/loss/tie與direction。差值定義為`candidate - reference`；對latency與page fault指標而言，負值代表candidate較好。Markdown report必須嵌入`significant_effects.md`摘要；若尚未產生，必須提供可執行的產生命令，而不是讓report generation失敗。
+每個效果必須計算paired median difference、mean difference、bootstrap 95% CI、exact sign-test p-value、Benjamini-Hochberg FDR q-value、win/loss/tie與direction。差值定義為`candidate - reference`；對latency指標而言，負值代表candidate較好。`significant_effects.csv`保留通過顯著性門檻的paired effects；`significant_effects.md`必須精簡呈現每個`workload type × memory condition × metric`的最佳layout/backend/strategy組合，並標示該最佳組合相對`original baseline`是否顯著。Markdown report必須嵌入`significant_effects.md`摘要；若尚未產生，必須提供可執行的產生命令，而不是讓report generation失敗。
 
 ### 25.4 Layout 比較表
 

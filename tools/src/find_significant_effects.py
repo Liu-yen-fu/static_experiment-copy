@@ -15,8 +15,6 @@ from typing import Any
 METRICS = (
     "effective_first_query_latency_us",
     "effective_average_query_latency_us",
-    "average_latency_us",
-    "major_page_faults",
 )
 FIELDS = [
     "comparison_type",
@@ -194,6 +192,34 @@ def strategy_vs_baseline(rows: list[dict[str, str]], metrics: tuple[str, ...], m
     return output
 
 
+def combo_vs_original_baseline(rows: list[dict[str, str]], metrics: tuple[str, ...], min_pairs: int, bootstrap_iterations: int) -> list[dict[str, Any]]:
+    output = []
+    baselines = {
+        identity(row, "workload_type", "memory_condition", "measurement_file", "repetition"): row
+        for row in rows
+        if row.get("layout") == "original" and row.get("strategy_key") == "baseline"
+    }
+    groups: dict[tuple[str, str, str, str, str], list[dict[str, str]]] = defaultdict(list)
+    for row in rows:
+        groups[identity(row, "workload_type", "memory_condition", "layout", "backend", "strategy_key")].append(row)
+    for key, candidates in groups.items():
+        workload_type, memory_condition, layout, backend, strategy_key = key
+        pairs = []
+        for candidate in candidates:
+            reference = baselines.get((workload_type, memory_condition, candidate["measurement_file"], candidate["repetition"]))
+            if reference:
+                pairs.append((reference, candidate))
+        if len(pairs) < min_pairs:
+            continue
+        context = {"workload_type": workload_type, "layout": layout, "memory_condition": memory_condition, "backend": backend, "strategy_key": strategy_key}
+        label = f"{layout}/{backend or 'baseline'}/{strategy_key}"
+        for metric in metrics:
+            effect = paired_effect("combo_vs_original_baseline", context, metric, "original baseline", label, pairs, bootstrap_iterations, stable_seed("combo", key, metric))
+            if effect:
+                output.append(effect)
+    return output
+
+
 def backend_comparisons(rows: list[dict[str, str]], backends: list[str], metrics: tuple[str, ...], min_pairs: int, bootstrap_iterations: int) -> list[dict[str, Any]]:
     output = []
     if len(backends) < 2:
@@ -261,25 +287,82 @@ def format_row(row: dict[str, Any]) -> dict[str, Any]:
     return output
 
 
-def write_markdown(path: Path, rows: list[dict[str, Any]], alpha: float) -> None:
+def combo_key(row: dict[str, Any]) -> tuple[str, str, str, str, str, str]:
+    return (
+        str(row.get("workload_type", "")),
+        str(row.get("memory_condition", "")),
+        str(row.get("layout", "")),
+        str(row.get("backend", "")),
+        str(row.get("strategy_key", "")),
+        str(row.get("metric", "")),
+    )
+
+
+def best_combo_rows(raw_rows: list[dict[str, str]], effects: list[dict[str, Any]], metrics: tuple[str, ...]) -> list[dict[str, Any]]:
+    groups: dict[tuple[str, str, str, str, str, str], list[float]] = defaultdict(list)
+    for row in raw_rows:
+        if row.get("status") != "completed":
+            continue
+        for metric in metrics:
+            if row.get(metric, "") != "":
+                groups[identity(row, "workload_type", "memory_condition", "layout", "backend", "strategy_key") + (metric,)].append(float(row[metric]))
+    best: dict[tuple[str, str, str], tuple[float, tuple[str, str, str, str, str, str]]] = {}
+    for key, values in groups.items():
+        workload_type, memory_condition, layout, backend, strategy_key, metric = key
+        med = median(values)
+        scope = (workload_type, memory_condition, metric)
+        current = best.get(scope)
+        candidate = (med, key)
+        if current is None or candidate < current:
+            best[scope] = candidate
+    effect_by_key = {combo_key(row): row for row in effects if row["comparison_type"] == "combo_vs_original_baseline"}
+    output = []
+    for scope in sorted(best):
+        med, key = best[scope]
+        workload_type, memory_condition, layout, backend, strategy_key, metric = key
+        effect = effect_by_key.get(key)
+        output.append({
+            "workload_type": workload_type,
+            "memory_condition": memory_condition,
+            "metric": metric,
+            "layout": layout,
+            "backend": backend,
+            "strategy_key": strategy_key,
+            "median": med,
+            "effect": effect,
+        })
+    return output
+
+
+def write_markdown(path: Path, raw_rows: list[dict[str, str]], rows: list[dict[str, Any]], metrics: tuple[str, ...], alpha: float) -> None:
     lines = ["# 統計顯著效果摘要", ""]
     lines += [
-        f"此表只列出 FDR q-value ≤ {alpha:g} 且 bootstrap 95% CI 不跨 0 的 paired effects。",
-        "差值定義為 `candidate - reference`；對 latency 與 page faults 指標而言，負值代表 candidate 較好。",
+        "此摘要只看 effective first-query 與 effective average-query 兩個 metric。",
+        "每列針對一個 `workload type × memory condition × metric` 選出 median latency 最低的 layout/backend/strategy 組合，並檢查它相對 `original baseline` 是否具有統計顯著效果。",
+        f"顯著條件為 FDR q-value ≤ {alpha:g} 且 bootstrap 95% CI 不跨 0。差值定義為 `best combo - original baseline`；負值代表最佳組合較好。",
         "",
     ]
-    if not rows:
-        lines += ["未找到符合門檻的統計顯著效果。", ""]
+    best_rows = best_combo_rows(raw_rows, rows, metrics)
+    if not best_rows:
+        lines += ["沒有足夠資料可選出最佳組合。", ""]
     else:
-        headers = ["Type", "Workload", "Layout", "Memory", "Backend", "Strategy", "Metric", "Reference", "Candidate", "Pairs", "Median diff", "95% CI", "q", "Direction"]
+        headers = ["Workload", "Memory", "Metric", "Best layout", "Best backend", "Best strategy", "Best median", "Significant vs original baseline", "Median diff", "95% CI", "q"]
         lines += ["| " + " | ".join(headers) + " |", "| " + " | ".join("---" for _ in headers) + " |"]
-        for row in rows:
+        for item in best_rows:
+            effect = item["effect"]
+            significant = bool(effect and float(effect["q_value"]) <= alpha and not (float(effect["ci95_low"]) <= 0 <= float(effect["ci95_high"])))
             lines.append("| " + " | ".join(str(value).replace("|", "\\|") for value in [
-                row["comparison_type"], row["workload_type"], row["layout"], row["memory_condition"], row["backend"] or "—",
-                row["strategy_key"], row["metric"], row["reference"], row["candidate"], row["pair_count"],
-                row["median_difference"], f"{row['ci95_low']}–{row['ci95_high']}", row["q_value"], row["direction"],
+                item["workload_type"], item["memory_condition"], item["metric"], item["layout"], item["backend"] or "—",
+                item["strategy_key"], number(item["median"]), "yes" if significant else "no",
+                number(effect["median_difference"]) if effect else "N/A",
+                f"{number(effect['ci95_low'])}–{number(effect['ci95_high'])}" if effect else "N/A",
+                number(effect["q_value"]) if effect else "N/A",
             ]) + " |")
         lines.append("")
+    lines += [
+        "完整通過門檻的 paired effects 保留於 `significant_effects.csv`。",
+        "",
+    ]
     path.write_text("\n".join(lines), encoding="utf-8", newline="\n")
 
 
@@ -301,6 +384,7 @@ def main() -> int:
     rows = read_csv(raw_path)
     metrics = tuple(metric for metric in METRICS if any(row.get(metric, "") != "" for row in rows))
     effects = []
+    effects.extend(combo_vs_original_baseline(rows, metrics, args.min_pairs, args.bootstrap_iterations))
     effects.extend(strategy_vs_baseline(rows, metrics, args.min_pairs, args.bootstrap_iterations))
     effects.extend(backend_comparisons(rows, config["prefetch"]["backends"], metrics, args.min_pairs, args.bootstrap_iterations))
     effects.extend(memory_comparisons(rows, [item["name"] for item in config["memory_conditions"]], metrics, args.min_pairs, args.bootstrap_iterations))
@@ -314,7 +398,7 @@ def main() -> int:
     formatted = [format_row(row) for row in significant]
     write_csv(root / "significant_effects.csv", formatted)
     temporary = root / f".significant_effects.md.{os.getpid()}.tmp"
-    write_markdown(temporary, formatted, args.alpha)
+    write_markdown(temporary, rows, formatted, metrics, args.alpha)
     os.replace(temporary, root / "significant_effects.md")
     return 0
 
