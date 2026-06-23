@@ -48,7 +48,7 @@ def fallback_png(path: Path, points: list[dict[str, object]]) -> None:
                 elif marker==2: draw.polygon([(x,y-6),(x-6,y+5),(x+6,y+5)],fill=color)
                 else: draw.polygon([(x,y-6),(x-6,y),(x,y+6),(x+6,y)],fill=color)
                 strategy=str(point["strategy_key"]); strategy=re.sub(r"residency_topk_.+_i(\d+)_l(\d+)",r"resident-i\1l\2",strategy).replace("offset_topk_interior_n","offset-n").replace("range_interior","range")
-                labels.append(f"{point['workload_type']}:{point['layout']}:{strategy}")
+                labels.append(f"{point['layout']}:{strategy}")
             for index,label in enumerate(labels):
                 draw.text((left,bottom+55+index*14),label,fill=color,font=font)
         canvas.save(path,format="PNG")
@@ -92,7 +92,7 @@ def fallback_png(path: Path, points: list[dict[str, object]]) -> None:
     path.write_bytes(b"\x89PNG\r\n\x1a\n" + chunk(b"IHDR", struct.pack(">IIBBBBB", width, height, 8, 2, 0, 0, 0)) + chunk(b"IDAT", zlib.compress(scanlines, 9)) + chunk(b"IEND", b""))
 
 
-def render_plot(path: Path, backend: str, points: list[dict[str, object]]) -> None:
+def render_plot(path: Path, backend: str, workload_type: str, points: list[dict[str, object]]) -> None:
     try:
         import matplotlib.pyplot as plt
     except ImportError:
@@ -119,13 +119,13 @@ def render_plot(path: Path, backend: str, points: list[dict[str, object]]) -> No
         for point in memory_points:
             x, y = float(point["prefetch_median_us"]), float(point["first_query_improvement_median"])
             shape = (str(point["layout"]), str(point["strategy_key"]))
-            label = f"{point['workload_type']}:{point['layout']}:{short_strategy(point['strategy_key'])}"
+            label = f"{point['layout']}:{short_strategy(point['strategy_key'])}"
             axis.errorbar(x, y, xerr=[[x-float(point["prefetch_p25_us"])], [float(point["prefetch_p75_us"])-x]], yerr=[[y-float(point["first_query_improvement_p25"])], [float(point["first_query_improvement_p75"])-y]], linestyle="none", marker=shape_markers[shape], color=colors[memory], capsize=3, alpha=.85, label=label)
         if memory_points and all(float(point["prefetch_p25_us"]) > 0 for point in memory_points): axis.set_xscale("log")
         if y_limits:
             axis.set_ylim(*y_limits)
             if y_limits[0] <= 0 <= y_limits[1]: axis.axhline(0, color="grey", linewidth=.8)
-        axis.set_title(f"{backend} / {memory}")
+        axis.set_title(f"{backend} / {workload_type} / {memory}")
         axis.set_xlabel("Prefetch elapsed (us, log scale)")
         axis.grid(alpha=.25, which="both")
     axes[0][0].set_ylabel("First-query improvement (%)")
@@ -142,7 +142,9 @@ def main() -> int:
     parser.add_argument("--experiment-dir", required=True, type=Path)
     args = parser.parse_args()
     with (args.experiment_dir / "config.json").open(encoding="utf-8") as handle:
-        backends = json.load(handle)["prefetch"]["backends"]
+        config = json.load(handle)
+    backends = config["prefetch"]["backends"]
+    workload_types = config["workloads"]["types"]
     comparison_files = sorted((args.experiment_dir / "results").glob("*/*/memory_conditions/*/backend_comparison.csv"))
     if not comparison_files:
         parser.error("no backend_comparison.csv files found")
@@ -169,7 +171,13 @@ def main() -> int:
     with (output_dir / "tradeoff_points.csv").open("w", newline="", encoding="utf-8") as handle:
         writer = csv.DictWriter(handle, fieldnames=fields); writer.writeheader(); writer.writerows(points)
     for backend in backends:
-        render_plot(output_dir / f"tradeoff_{backend}.png", backend, [point for point in points if point["backend"] == backend])
+        for workload_type in workload_types:
+            render_plot(
+                output_dir / f"tradeoff_{backend}_{workload_type}.png",
+                backend,
+                workload_type,
+                [point for point in points if point["backend"] == backend and point["workload_type"] == workload_type],
+            )
     return 0
 
 

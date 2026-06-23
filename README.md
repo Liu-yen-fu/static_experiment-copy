@@ -431,8 +431,8 @@ manifest.json
 state.json
 cells/
 logs/
-plots/tradeoff_madvise.png
-plots/tradeoff_pread.png
+plots/tradeoff_madvise_read_zipf_full.png
+plots/tradeoff_pread_read_zipf_full.png
 plots/tradeoff_points.csv
 report.md
 results/all_raw.csv
@@ -456,8 +456,8 @@ results/read_zipf_full/original/memory_conditions/unlimited/backends/<backend>/<
 - 每個 strategy variant 的 `summary.csv` 同時包含 `measurement` 與 `strategy` scope。
 - Original layout的兩個backend目錄各包含`strategy_comparison.csv`，layout目錄另包含`backend_comparison.csv`。
 - `read_zipf_full/layout_comparisons`目錄包含`unlimited.csv`，original目錄包含`memory_comparison.csv`。
-- `plots/tradeoff_madvise.png`、`plots/tradeoff_pread.png`與`plots/tradeoff_points.csv`均已產生。
-- `report.md` 已產生，並包含實驗摘要、環境、比較表、trade-off、cell狀態、workload清單與artifact連結。
+- `plots/tradeoff_madvise_read_zipf_full.png`、`plots/tradeoff_pread_read_zipf_full.png`與`plots/tradeoff_points.csv`均已產生。
+- `report.md` 已產生，並包含實驗摘要、環境、最佳組合推薦、比較表、trade-off、cell狀態、workload清單與artifact連結。
 
 再次使用完全相同的 config 執行相同命令時，orchestrator 會 resume：沿用既有抽樣與 training profile，並跳過必要artifacts存在、格式正確且彼此一致的completed cells。
 
@@ -490,11 +490,11 @@ Resume時：
 less experiments/smoke/report.md
 ```
 
-若桌面環境支援，可分別開啟各backend的trade-off圖：
+若桌面環境支援，可分別開啟各backend與workload type的trade-off圖：
 
 ```bash
-xdg-open experiments/smoke/plots/tradeoff_madvise.png
-xdg-open experiments/smoke/plots/tradeoff_pread.png
+xdg-open experiments/smoke/plots/tradeoff_madvise_read_zipf_full.png
+xdg-open experiments/smoke/plots/tradeoff_pread_read_zipf_full.png
 ```
 
 主要結果位置：
@@ -515,20 +515,36 @@ results/<workload-type>/layout_comparisons/<memory-condition>.csv
 - `backend_comparison.csv`：同一layout與memory condition下跨madvise/pread比較。
 - `memory_comparison.csv`：相同layout、strategy、backend在所有memory conditions間做paired比較。
 - `layout_comparisons/<memory-condition>.csv`：只使用該memory condition的backend-neutral baseline比較layouts。
-- `tradeoff_<backend>.png`：只包含該backend點位的trade-off圖。
+- `tradeoff_<backend>_<workload-type>.png`：只包含該backend與該workload type點位的trade-off圖；formal experiment會因此拆成多張較容易閱讀的圖。
 - `tradeoff_points.csv`：所有backend的trade-off實際點位與P25–P75；`backend`欄位保留分類。
 - Trade-off圖以memory condition分成並排子圖，X軸使用log scale，Y軸依P25–P75範圍自動縮放；點位為median，水平與垂直線分別為兩軸的P25–P75 error bars。
 - `cells/<cell-id>/cell.json`：完整cell provenance、metrics與artifact路徑。
 - `logs/<cell-id>.err`：cell失敗時的主要診斷資訊。
 
-Summary、strategy comparison與backend comparison另包含衍生metric `effective_first_query_latency_us`，其定義為`prefetch_elapsed_us + first_query_latency_us`。`effective_first_query_improvement_percent`使用相同measurement file與repetition的baseline first-query latency配對計算：
+Summary、strategy comparison與backend comparison另包含衍生metric `effective_first_query_latency_us`，其定義為`prefetch_elapsed_us + first_query_latency_us`。也包含`effective_average_query_latency_us`，其定義為`average_latency_us + prefetch_elapsed_us / ops`，也就是把一次性的prefetch cost平均攤到每個operation上。
+
+`effective_first_query_improvement_percent`使用相同measurement file與repetition的baseline first-query latency配對計算：
 
 ```text
 (baseline_first_query_latency_us - effective_first_query_latency_us)
 / baseline_first_query_latency_us × 100
 ```
 
-Report會同時顯示原始first-query改善與包含prefetch cost後的effective first-query改善。Raw CSV維持原始measurement欄位，不重複儲存可派生數值。
+`effective_average_query_improvement_percent`使用相同measurement file與repetition的baseline average-query latency配對計算：
+
+```text
+(baseline_average_latency_us - effective_average_query_latency_us)
+/ baseline_average_latency_us × 100
+```
+
+Report會同時顯示原始first-query/average-query改善，以及包含prefetch cost後的effective first-query/effective average-query改善。Raw CSV會保留`ops`原始量測欄位以支援effective average計算；可派生數值主要寫入summary、comparison與`results/all_raw.csv`。
+
+Report另會針對每個`workload type × memory condition`組合列出最佳layout / strategy / backend：
+
+- 整體平均視角：選擇`effective_average_query_latency_us` median最低者。
+- 第一筆查詢視角：選擇`effective_first_query_latency_us` median最低者。
+
+Baseline沒有backend，表中以`—`表示。這兩張表是快速判斷 formal experiment 結論的入口；若兩個視角選出的組合不同，代表「整體平均成本」與「cold-start第一筆體感」存在取捨。
 
 若要替既有experiment重新產生包含新指標的summary與report，先確認該experiment已有完整classified raw results與plots，再執行：
 

@@ -9,10 +9,10 @@ import re
 from collections import defaultdict
 from pathlib import Path
 
-METRICS = ["prefetch_elapsed_us", "first_query_latency_us", "effective_first_query_latency_us", "average_latency_us", "major_page_faults", "minor_page_faults", "resident_after_cold_pages", "requested_selected_resident_ratio", "successful_selected_resident_ratio"]
-IMPROVEMENT_METRICS = {"first_query_latency_us", "effective_first_query_latency_us", "average_latency_us"}
-RAW_FIELDS = "cell_id status measurement_file repetition selected_interior selected_leaf syscall_count prefetch_elapsed_us first_query_latency_us average_latency_us major_page_faults minor_page_faults resident_after_cold_pages requested_selected_resident_ratio successful_selected_resident_ratio".split()
-ALL_RAW_FIELDS = "experiment_id cell_id status workload_type layout memory_condition memory_limit_enabled memory_max_bytes strategy_key backend n interior_k leaf_k measurement_file repetition selected_interior selected_leaf syscall_count prefetch_elapsed_us first_query_latency_us average_latency_us major_page_faults minor_page_faults resident_after_cold_pages requested_selected_resident_ratio successful_selected_resident_ratio".split()
+METRICS = ["prefetch_elapsed_us", "first_query_latency_us", "effective_first_query_latency_us", "average_latency_us", "effective_average_query_latency_us", "major_page_faults", "minor_page_faults", "resident_after_cold_pages", "requested_selected_resident_ratio", "successful_selected_resident_ratio"]
+IMPROVEMENT_METRICS = {"first_query_latency_us", "effective_first_query_latency_us", "average_latency_us", "effective_average_query_latency_us"}
+RAW_FIELDS = "cell_id status measurement_file repetition selected_interior selected_leaf syscall_count prefetch_elapsed_us first_query_latency_us average_latency_us ops major_page_faults minor_page_faults resident_after_cold_pages requested_selected_resident_ratio successful_selected_resident_ratio".split()
+ALL_RAW_FIELDS = "experiment_id cell_id status workload_type layout memory_condition memory_limit_enabled memory_max_bytes strategy_key backend n interior_k leaf_k measurement_file repetition selected_interior selected_leaf syscall_count prefetch_elapsed_us first_query_latency_us average_latency_us effective_first_query_latency_us effective_average_query_latency_us ops major_page_faults minor_page_faults resident_after_cold_pages requested_selected_resident_ratio successful_selected_resident_ratio".split()
 FIELDS = ["scope", "measurement_file", "metric", "sample_count", "mean", "median", "p25", "p75", "p99", "min", "max", "comparison_basis", "improvement_percent"]
 STRATEGY_COMPARISON_FIELDS = ["strategy_key", "metric", "sample_count", "mean", "median", "p25", "p75", "p99", "min", "max", "baseline_mean", "improvement_percent"]
 BACKEND_COMPARISON_FIELDS = ["backend", "strategy_key", "metric", "sample_count", "mean", "median", "p25", "p75", "p99", "min", "max", "baseline_mean", "improvement_percent"]
@@ -50,11 +50,21 @@ def add_derived_metrics(row: dict[str, str]) -> None:
     first = row.get("first_query_latency_us", "")
     if first == "":
         row["effective_first_query_latency_us"] = ""
-        return
+    else:
+        prefetch = row.get("prefetch_elapsed_us", "")
+        if row.get("_strategy_key") == "baseline":
+            prefetch = "0"
+        row["effective_first_query_latency_us"] = str(float(first) + float(prefetch)) if prefetch != "" else ""
+    average = row.get("average_latency_us", "")
+    ops = row.get("ops", "")
     prefetch = row.get("prefetch_elapsed_us", "")
     if row.get("_strategy_key") == "baseline":
         prefetch = "0"
-    row["effective_first_query_latency_us"] = str(float(first) + float(prefetch)) if prefetch != "" else ""
+        row["effective_average_query_latency_us"] = average
+    elif average == "" or prefetch == "" or ops in {"", "0"}:
+        row["effective_average_query_latency_us"] = ""
+    else:
+        row["effective_average_query_latency_us"] = str(float(average) + float(prefetch) / float(ops))
 
 
 def strategy_summary(samples: list[dict[str, str]], baselines: dict[tuple[str, str, str, str, str], dict[str, str]]) -> list[dict[str, object]]:
@@ -195,6 +205,14 @@ def main() -> int:
             rows = list(csv.DictReader(handle))
         for row in rows:
             row.update({"_workload_type": workload_type, "_layout": layout, "_memory_condition": memory_condition, "_backend": backend, "_strategy_key": strategy_key})
+            if row.get("ops", "") == "":
+                cell_path = args.experiment_dir / "cells" / row.get("cell_id", "") / "cell.json"
+                if cell_path.is_file():
+                    try:
+                        metrics = json.loads(cell_path.read_text(encoding="utf-8")).get("harness_metrics") or {}
+                        row["ops"] = metrics.get("ops", "")
+                    except (OSError, json.JSONDecodeError):
+                        row["ops"] = ""
             add_derived_metrics(row)
             source_rows.append(row)
         rows_by_raw[path] = [row for row in rows if row["status"] == "completed"]
@@ -216,7 +234,7 @@ def main() -> int:
         cell_path = args.experiment_dir / "cells" / row["cell_id"] / "cell.json"
         cell = json.loads(cell_path.read_text(encoding="utf-8"))
         condition = memory_by_name[row["_memory_condition"]]; variant = cell["strategy"]
-        combined_raw_rows.append({"experiment_id": config["experiment"]["id"], "cell_id": row["cell_id"], "status": row["status"], "workload_type": row["_workload_type"], "layout": row["_layout"], "memory_condition": row["_memory_condition"], "memory_limit_enabled": str(condition["enabled"]).lower(), "memory_max_bytes": condition["memory_max_bytes"] if condition["memory_max_bytes"] is not None else "", "strategy_key": row["_strategy_key"], "backend": row["_backend"] or "", "n": variant["n"] if variant["n"] is not None else "", "interior_k": variant["interior_k"] if variant["interior_k"] is not None else "", "leaf_k": variant["leaf_k"] if variant["leaf_k"] is not None else "", **{field: row.get(field, "") for field in RAW_FIELDS if field not in {"cell_id", "status"}}})
+        combined_raw_rows.append({"experiment_id": config["experiment"]["id"], "cell_id": row["cell_id"], "status": row["status"], "workload_type": row["_workload_type"], "layout": row["_layout"], "memory_condition": row["_memory_condition"], "memory_limit_enabled": str(condition["enabled"]).lower(), "memory_max_bytes": condition["memory_max_bytes"] if condition["memory_max_bytes"] is not None else "", "strategy_key": row["_strategy_key"], "backend": row["_backend"] or "", "n": variant["n"] if variant["n"] is not None else "", "interior_k": variant["interior_k"] if variant["interior_k"] is not None else "", "leaf_k": variant["leaf_k"] if variant["leaf_k"] is not None else "", **{field: row.get(field, "") for field in RAW_FIELDS if field not in {"cell_id", "status"}}, "effective_first_query_latency_us": row.get("effective_first_query_latency_us", ""), "effective_average_query_latency_us": row.get("effective_average_query_latency_us", "")})
     write_csv(results_root / "all_raw.csv", ALL_RAW_FIELDS, combined_raw_rows)
 
     baselines = {(row["_layout"], row["_workload_type"], row["_memory_condition"], row["measurement_file"], row["repetition"]): row for row in all_rows if row["_strategy_key"] == "baseline"}
