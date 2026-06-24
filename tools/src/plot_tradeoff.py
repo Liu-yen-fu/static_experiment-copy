@@ -24,6 +24,17 @@ def short_strategy(value: object) -> str:
     return f"resident-i{match.group(1)}l{match.group(2)}" if match else text
 
 
+def strategy_family(value: object) -> str:
+    text = str(value)
+    if text == "range_interior":
+        return "range"
+    if text.startswith("offset_topk_interior"):
+        return "offset"
+    if text.startswith("residency_topk"):
+        return "resident"
+    return short_strategy(text)
+
+
 def short_combo(layout: str, backend: str, strategy_key: str) -> str:
     if strategy_key == "baseline":
         return f"{layout}\nbaseline"
@@ -113,9 +124,7 @@ def render_plot(path: Path, backend: str, workload_type: str, layout: str, point
         return
     memories = list(dict.fromkeys(str(point["memory_condition"]) for point in points))
     colors = {name: plt.get_cmap("tab10")(index % 10) for index, name in enumerate(memories)}
-    markers = ["o", "s", "^", "D", "v", "P", "X", "<", ">", "*"]
-    strategies = list(dict.fromkeys(str(point["strategy_key"]) for point in points))
-    strategy_markers = {strategy: markers[index % len(markers)] for index, strategy in enumerate(strategies)}
+    family_markers = {"range": "o", "offset": "s", "resident": "^"}
     if not memories: memories = ["no-data"]
     figure, axes = plt.subplots(1, len(memories), figsize=(max(9, 6 * len(memories)), 6), squeeze=False, sharey=True)
     y_bounds = [float(point["first_query_improvement_median"]) for point in points]
@@ -127,8 +136,8 @@ def render_plot(path: Path, backend: str, workload_type: str, layout: str, point
         axis = axes[0][index]; memory_points = [point for point in points if str(point["memory_condition"]) == memory]
         for point in memory_points:
             x, y = float(point["prefetch_median_us"]), float(point["first_query_improvement_median"])
-            label = short_strategy(point["strategy_key"])
-            axis.scatter(x, y, marker=strategy_markers[str(point["strategy_key"])], color=colors[memory], alpha=.75, s=42, label=label)
+            family = strategy_family(point["strategy_key"])
+            axis.scatter(x, y, marker=family_markers.get(family, "D"), color=colors[memory], alpha=.75, s=42, label=family)
         if memory_points and all(float(point["prefetch_median_us"]) > 0 for point in memory_points): axis.set_xscale("log")
         if y_limits:
             axis.set_ylim(*y_limits)

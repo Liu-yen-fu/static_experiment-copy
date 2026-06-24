@@ -175,6 +175,90 @@ def best_combinations(config: dict[str, Any], results_root: Path, metric: str) -
     return output
 
 
+def best_combo_records(config: dict[str, Any], results_root: Path, metrics: list[str]) -> list[dict[str, Any]]:
+    records = []
+    for workload_type in config["workloads"]["types"]:
+        for condition in config["memory_conditions"]:
+            for metric in metrics:
+                memory_name = condition["name"]
+                best: tuple[float, str, str, str, dict[str, dict[str, str]]] | None = None
+                for layout in config["execution"]["layout_order"]:
+                    path = results_root / workload_type / layout / "memory_conditions" / memory_name / "backend_comparison.csv"
+                    if not path.is_file():
+                        continue
+                    grouped: dict[tuple[str, str], dict[str, dict[str, str]]] = defaultdict(dict)
+                    for row in read_csv(path):
+                        grouped[(row.get("backend", ""), row["strategy_key"])][row["metric"]] = row
+                    for (backend, strategy_key), grouped_metrics in grouped.items():
+                        row = grouped_metrics.get(metric)
+                        median = numeric(row.get("median") if row else None)
+                        if median is None:
+                            continue
+                        candidate = (median, layout, backend, strategy_key, grouped_metrics)
+                        if best is None or candidate[:4] < best[:4]:
+                            best = candidate
+                if best is None:
+                    records.append({"workload_type": workload_type, "memory_condition": memory_name, "metric": metric, "layout": "N/A", "backend": "", "strategy_key": "N/A", "median": None, "p25": None, "p75": None, "improvement": None})
+                    continue
+                median, layout, backend, strategy_key, grouped_metrics = best
+                selected = grouped_metrics.get(metric, {})
+                records.append({"workload_type": workload_type, "memory_condition": memory_name, "metric": metric, "layout": layout, "backend": backend, "strategy_key": strategy_key, "median": selected.get("median", ""), "p25": selected.get("p25", ""), "p75": selected.get("p75", ""), "improvement": selected.get("improvement_percent", "")})
+    return records
+
+
+def significant_combo_keys(root: Path) -> set[tuple[str, str, str, str, str, str]]:
+    path = root / "significant_effects.csv"
+    if not path.is_file():
+        return set()
+    keys = set()
+    for row in read_csv(path):
+        if row.get("comparison_type") != "combo_vs_original_baseline":
+            continue
+        keys.add((row["workload_type"], row["memory_condition"], row["metric"], row["layout"], row.get("backend", ""), row["strategy_key"]))
+    return keys
+
+
+def append_concise_best_combo_section(lines: list[str], config: dict[str, Any], results_root: Path, root: Path) -> None:
+    metrics = ["effective_average_query_latency_us", "effective_first_query_latency_us"]
+    sig_keys = significant_combo_keys(root)
+    rows = []
+    for record in best_combo_records(config, results_root, metrics):
+        backend = record["backend"] or "—"
+        original_baseline = record["layout"] == "original" and record["strategy_key"] == "baseline" and record["backend"] == ""
+        key = (record["workload_type"], record["memory_condition"], record["metric"], record["layout"], record["backend"], record["strategy_key"])
+        improvement = numeric(record["improvement"])
+        if original_baseline:
+            significant = "—"
+            recommendation = "baseline best"
+        else:
+            significant = "yes" if key in sig_keys else "no"
+            if significant == "yes" and (improvement is None or improvement > 0):
+                recommendation = "use"
+            elif improvement is not None and improvement > 0:
+                recommendation = "promising"
+            else:
+                recommendation = "baseline best"
+        rows.append([
+            record["workload_type"],
+            record["memory_condition"],
+            record["metric"],
+            record["layout"],
+            backend,
+            record["strategy_key"],
+            number(record["median"], suffix=" µs"),
+            f"{number(record['p25'], suffix=' µs')}–{number(record['p75'], suffix=' µs')}",
+            number(record["improvement"], suffix="%"),
+            significant,
+            recommendation,
+        ])
+    lines += ["", "## 最佳 layout / strategy / backend 組合（含顯著性）", ""]
+    lines += [
+        "每列對應一個 `workload type × memory condition × metric`，列出median latency最低的組合。表格依workload type、memory condition、metric排序。若最佳組合是`original / baseline`，顯著性以`—`表示。",
+        "",
+    ]
+    lines += table(["Workload type", "Memory condition", "Metric", "Best layout", "Best backend", "Best strategy", "Best median", "Best P25–P75", "Improvement", "Significant?", "Recommendation"], rows)
+
+
 def append_best_combo_section(lines: list[str], config: dict[str, Any], results_root: Path) -> None:
     lines += ["", "## 最佳 layout / strategy / backend 組合", ""]
     lines += [
@@ -242,6 +326,48 @@ def append_summary_sections(lines: list[str], config: dict[str, Any], manifest: 
         ["Filesystem type", environment.get("filesystem_type")], ["Storage devices", storage_summary(environment.get("storage_device_info"))],
         ["SQLite version", environment.get("sqlite_version")],
     ])
+
+
+def sweep_axis_label(axis: dict[str, Any]) -> str:
+    if "values" in axis:
+        return "{" + ", ".join(str(value) for value in axis["values"]) + "}"
+    spec = axis["range"]
+    return f"range({spec['start']}, {spec['end_exclusive']}, {spec['step']})"
+
+
+def sweep_values(axis: dict[str, Any]) -> list[int]:
+    if "values" in axis:
+        return list(axis["values"])
+    spec = axis["range"]
+    return list(range(spec["start"], spec["end_exclusive"], spec["step"]))
+
+
+def append_configured_strategies_section(lines: list[str], config: dict[str, Any]) -> None:
+    configured = {item["name"]: item for item in config["prefetch"]["strategies"]}
+    rows = []
+    for name in config["execution"]["strategy_order"]:
+        item = configured[name]
+        if name == "baseline":
+            rows.append([name, 1, "無prefetch；作為比較基準"])
+        elif name == "range_interior":
+            rows.append([name, 1, "所有interior pages"])
+        elif name == "offset_topk_interior":
+            values = sweep_values(item["n"])
+            rows.append([name, len(values), "n=" + ", ".join(str(value) for value in values)])
+        elif name == "residency_topk" and "sweep" in item:
+            sweep = item["sweep"]
+            interior_values = sweep_values(sweep["interior_k"])
+            leaf_values = sweep_values(sweep["leaf_k"])
+            count = sum(1 for interior in interior_values for leaf in leaf_values if interior != 0 or leaf != 0)
+            rows.append([name, count, f"interior_k={sweep_axis_label(sweep['interior_k'])}; leaf_k={sweep_axis_label(sweep['leaf_k'])}; 排除0/0 baseline"])
+        elif name == "residency_topk":
+            variants = item.get("variants", [])
+            detail = ", ".join(f"{variant.get('label', 'variant')}: i={variant['interior_k']}, l={variant['leaf_k']}" for variant in variants)
+            rows.append([name, len(variants), detail])
+        else:
+            rows.append([name, "N/A", "N/A"])
+    lines += ["", "## 採用的 prefetch strategies", ""]
+    lines += table(["Strategy", "展開數量", "設定"], rows)
 
 
 def append_tradeoff_section(lines: list[str], root: Path, config: dict[str, Any], workloads: dict[str, Any], include_tables: bool) -> None:
@@ -314,8 +440,13 @@ def generate(root: Path, concise: bool = False) -> str:
     memory_conditions = config["memory_conditions"]
     lines = [f"# {'精簡' if concise else '完整'}實驗報告：{md(experiment['id'])}", ""]
     append_summary_sections(lines, config, manifest, counts)
+    if concise:
+        append_configured_strategies_section(lines, config)
     results_root = root / "results"
-    append_best_combo_section(lines, config, results_root)
+    if concise:
+        append_concise_best_combo_section(lines, config, results_root, root)
+    else:
+        append_best_combo_section(lines, config, results_root)
     append_significant_effects_section(lines, root)
     append_core_plots_section(lines)
     if concise:

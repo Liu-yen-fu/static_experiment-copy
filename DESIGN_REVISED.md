@@ -1582,7 +1582,7 @@ Y軸: first-query improvement percent
 layout × workload type × memory condition × strategy variant
 ```
 
-Trade-off圖只顯示median點，不顯示p25–p75 error bars；P25–P75仍必須保留於`tradeoff_points.csv`。Y軸使用same-layout paired baseline improvement。同一backend、workload type與layout圖必須依memory condition分成並排子圖；子圖共享依median範圍加padding計算的Y軸尺度。X軸在所有median prefetch cost均大於0時使用log scale。點形區分strategy variant，圖例以`short-strategy`或等價短標示標示點位。
+Trade-off圖只顯示median點，不顯示p25–p75 error bars；P25–P75仍必須保留於`tradeoff_points.csv`。Y軸使用same-layout paired baseline improvement。同一backend、workload type與layout圖必須依memory condition分成並排子圖；子圖共享依median範圍加padding計算的Y軸尺度。X軸在所有median prefetch cost均大於0時使用log scale。點形區分strategy family（例如range、offset、resident），圖例不得列出每個variant以避免重複；精確strategy variant必須由`tradeoff_points.csv`保留。
 
 優先使用Matplotlib產生完整座標、圖例與並排子圖。Matplotlib不可用時可使用Pillow fallback；兩者皆不可用時仍須輸出內建最小PNG，但最小fallback只保證座標線、點位與error bars，不保證文字標籤。
 
@@ -1620,6 +1620,7 @@ experiments/<experiment-id>/report-concise.md
 ```text
 實驗摘要
 執行環境
+採用的prefetch strategies
 最佳layout / strategy / backend組合
 統計顯著效果
 各workload type結果
@@ -1637,6 +1638,7 @@ Artifacts連結
 ```text
 實驗摘要
 執行環境
+採用的prefetch strategies
 最佳layout / strategy / backend組合
 統計顯著效果
 Prefetch cost與first-query improvement trade-off圖
@@ -1645,7 +1647,7 @@ Cell狀態
 主要Artifacts連結
 ```
 
-精簡版不得展開每個workload/layout/backend/strategy的完整比較表；完整表格由`report.md`與CSV artifacts保留。
+精簡版必須列出本次實驗採用的prefetch strategies及其展開數量；對sweep型策略必須描述sweep軸與是否排除baseline等價組合。精簡版的最佳組合必須濃縮為單一表格，每列對應`workload type × memory condition × metric`，並列出最佳layout、backend、strategy、median、P25–P75、improvement、顯著性與recommendation。若最佳組合是`original / baseline`，backend與顯著性欄位必須以`—`表示。精簡版不得展開每個workload/layout/backend/strategy的完整比較表；完整表格由`report.md`與CSV artifacts保留。
 
 ### 25.1 實驗摘要
 
@@ -1938,7 +1940,7 @@ total: 45 cells
 - Trade-off CSV與config中每個backend/workload type對應的PNG產生成功。
 - `significant_effects.csv`與`significant_effects.md`產生成功。
 - `report.md`產生成功且包含實驗摘要、執行環境、最佳組合推薦、統計顯著效果、layout比較、per-memory-condition與per-backend strategy比較、backend比較、memory condition比較、first-query與average-query latency、trade-off圖、cell狀態、workload清單與artifact連結。
-- `report-concise.md`產生成功且只保留摘要、最佳組合、統計顯著效果、trade-off圖、cell狀態與主要artifact連結。
+- `report-concise.md`產生成功且只保留摘要、採用的prefetch strategies、含顯著性標記的最佳組合表、統計顯著效果、trade-off圖、cell狀態與主要artifact連結。
 - 相同config重跑時不得重新抽樣、重新training或重跑completed cells。
 - Smoke不要求任何prefetch策略必須優於baseline。
 

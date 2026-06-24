@@ -463,7 +463,7 @@ results/read_zipf_full/original/memory_conditions/unlimited/backends/<backend>/<
 - Original layout的兩個backend目錄各包含`strategy_comparison.csv`，layout目錄另包含`backend_comparison.csv`。
 - `read_zipf_full/layout_comparisons`目錄包含`unlimited.csv`，original目錄包含`memory_comparison.csv`。
 - `plots/best_effective_average_heatmap.png`、`plots/best_effective_first_heatmap.png`、各`tradeoff_<backend>_<workload-type>_<layout>.png`與`plots/tradeoff_points.csv`均已產生。
-- `report.md`與`report-concise.md`已產生；完整報告包含所有比較表，精簡報告只保留摘要、最佳組合、顯著效果、trade-off圖、cell狀態與主要artifact連結。
+- `report.md`與`report-concise.md`已產生；完整報告包含所有比較表，精簡報告只保留摘要、採用的prefetch strategies、含顯著性標記的最佳組合表、顯著效果摘要、trade-off圖、cell狀態與主要artifact連結。
 
 再次使用完全相同的 config 執行相同命令時，orchestrator 會 resume：沿用既有抽樣與 training profile，並跳過必要artifacts存在、格式正確且彼此一致的completed cells。
 
@@ -523,10 +523,10 @@ results/<workload-type>/layout_comparisons/<memory-condition>.csv
 - `memory_comparison.csv`：相同layout、strategy、backend在所有memory conditions間做paired比較。
 - `layout_comparisons/<memory-condition>.csv`：只使用該memory condition的backend-neutral baseline比較layouts。
 - `significant_effects.csv` / `significant_effects.md`：純Python paired統計分析；CSV保留通過門檻的效果，Markdown針對每個workload type與memory condition列出最佳layout/backend/strategy組合及其顯著性。
-- `report-concise.md`：精簡報告，適合先讀結論；完整細節留在`report.md`與CSV artifacts。
+- `report-concise.md`：精簡報告，適合先讀結論；會列出採用的prefetch strategies與sweep展開方式，完整細節留在`report.md`與CSV artifacts。
 - `best_effective_average_heatmap.png` / `best_effective_first_heatmap.png`：核心effective指標圖，每格是特定workload type與memory condition下的最佳layout/backend/strategy組合，顏色代表相對paired baseline的improvement。
 - `best_effective_summary.csv`：核心effective圖背後的最佳組合資料。
-- `tradeoff_<backend>_<workload-type>_<layout>.png`：只包含該backend、workload type與layout點位的trade-off圖；圖上只畫median點，不畫P25–P75 error bars，分布細節保留在CSV。
+- `tradeoff_<backend>_<workload-type>_<layout>.png`：只包含該backend、workload type與layout點位的trade-off圖；圖上只畫median點，不畫P25–P75 error bars，圖例以strategy family（range、offset、resident）呈現，精確variant與分布細節保留在CSV。
 - `tradeoff_points.csv`：所有backend的trade-off實際點位與P25–P75；`backend`欄位保留分類。
 - Trade-off圖以memory condition分成並排子圖，X軸使用log scale，Y軸依median範圍自動縮放；點位為median，P25–P75保留於`tradeoff_points.csv`。
 - `cells/<cell-id>/cell.json`：完整cell provenance、metrics與artifact路徑。
@@ -555,7 +555,7 @@ Report另會針對每個`workload type × memory condition`組合列出最佳lay
 - 整體平均視角：選擇`effective_average_query_latency_us` median最低者。
 - 第一筆查詢視角：選擇`effective_first_query_latency_us` median最低者。
 
-Baseline沒有backend，表中以`—`表示。這兩張表是快速判斷 formal experiment 結論的入口；若兩個視角選出的組合不同，代表「整體平均成本」與「cold-start第一筆體感」存在取捨。
+精簡報告會把這兩個視角合併成一張表；每列對應`workload type × memory condition × metric`，並同時標示best median、improvement、`Significant?`與`Recommendation`。Baseline沒有backend，表中以`—`表示；若最佳組合是`original / baseline`，顯著性欄位也以`—`表示。這張表是快速判斷 formal experiment 結論的入口。
 
 Report也會嵌入統計顯著效果摘要。`find_significant_effects.py`不依賴SciPy、pandas或statsmodels；它從`results/all_raw.csv`進行paired comparison，只檢查`effective_first_query_latency_us`與`effective_average_query_latency_us`。Markdown摘要針對每個`workload type × memory condition × metric`選出median latency最低的layout/backend/strategy組合，並檢查它相對`original baseline`是否顯著。CSV則保留通過門檻的paired effects。差值定義為`candidate - reference`；對latency指標而言，負值代表candidate較好。
 
