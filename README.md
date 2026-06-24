@@ -431,12 +431,16 @@ manifest.json
 state.json
 cells/
 logs/
-plots/tradeoff_madvise_read_zipf_full.png
-plots/tradeoff_pread_read_zipf_full.png
+plots/best_effective_average_heatmap.png
+plots/best_effective_first_heatmap.png
+plots/best_effective_summary.csv
+plots/tradeoff_madvise_read_zipf_full_original.png
+plots/tradeoff_pread_read_zipf_full_original.png
 plots/tradeoff_points.csv
 significant_effects.csv
 significant_effects.md
 report.md
+report-concise.md
 results/all_raw.csv
 results/read_zipf_full/layout_comparisons/unlimited.csv
 results/read_zipf_full/original/memory_comparison.csv
@@ -458,8 +462,8 @@ results/read_zipf_full/original/memory_conditions/unlimited/backends/<backend>/<
 - 每個 strategy variant 的 `summary.csv` 同時包含 `measurement` 與 `strategy` scope。
 - Original layout的兩個backend目錄各包含`strategy_comparison.csv`，layout目錄另包含`backend_comparison.csv`。
 - `read_zipf_full/layout_comparisons`目錄包含`unlimited.csv`，original目錄包含`memory_comparison.csv`。
-- `plots/tradeoff_madvise_read_zipf_full.png`、`plots/tradeoff_pread_read_zipf_full.png`與`plots/tradeoff_points.csv`均已產生。
-- `report.md` 已產生，並包含實驗摘要、環境、最佳組合推薦、比較表、trade-off、cell狀態、workload清單與artifact連結。
+- `plots/best_effective_average_heatmap.png`、`plots/best_effective_first_heatmap.png`、各`tradeoff_<backend>_<workload-type>_<layout>.png`與`plots/tradeoff_points.csv`均已產生。
+- `report.md`與`report-concise.md`已產生；完整報告包含所有比較表，精簡報告只保留摘要、最佳組合、顯著效果、trade-off圖、cell狀態與主要artifact連結。
 
 再次使用完全相同的 config 執行相同命令時，orchestrator 會 resume：沿用既有抽樣與 training profile，並跳過必要artifacts存在、格式正確且彼此一致的completed cells。
 
@@ -489,14 +493,15 @@ Resume時：
 先閱讀自動產生的繁體中文報告：
 
 ```bash
+less experiments/smoke/report-concise.md
 less experiments/smoke/report.md
 ```
 
 若桌面環境支援，可分別開啟各backend與workload type的trade-off圖：
 
 ```bash
-xdg-open experiments/smoke/plots/tradeoff_madvise_read_zipf_full.png
-xdg-open experiments/smoke/plots/tradeoff_pread_read_zipf_full.png
+xdg-open experiments/smoke/plots/tradeoff_madvise_read_zipf_full_original.png
+xdg-open experiments/smoke/plots/best_effective_average_heatmap.png
 ```
 
 主要結果位置：
@@ -518,9 +523,12 @@ results/<workload-type>/layout_comparisons/<memory-condition>.csv
 - `memory_comparison.csv`：相同layout、strategy、backend在所有memory conditions間做paired比較。
 - `layout_comparisons/<memory-condition>.csv`：只使用該memory condition的backend-neutral baseline比較layouts。
 - `significant_effects.csv` / `significant_effects.md`：純Python paired統計分析；CSV保留通過門檻的效果，Markdown針對每個workload type與memory condition列出最佳layout/backend/strategy組合及其顯著性。
-- `tradeoff_<backend>_<workload-type>.png`：只包含該backend與該workload type點位的trade-off圖；formal experiment會因此拆成多張較容易閱讀的圖。
+- `report-concise.md`：精簡報告，適合先讀結論；完整細節留在`report.md`與CSV artifacts。
+- `best_effective_average_heatmap.png` / `best_effective_first_heatmap.png`：核心effective指標圖，每格是特定workload type與memory condition下的最佳layout/backend/strategy組合，顏色代表相對paired baseline的improvement。
+- `best_effective_summary.csv`：核心effective圖背後的最佳組合資料。
+- `tradeoff_<backend>_<workload-type>_<layout>.png`：只包含該backend、workload type與layout點位的trade-off圖；圖上只畫median點，不畫P25–P75 error bars，分布細節保留在CSV。
 - `tradeoff_points.csv`：所有backend的trade-off實際點位與P25–P75；`backend`欄位保留分類。
-- Trade-off圖以memory condition分成並排子圖，X軸使用log scale，Y軸依P25–P75範圍自動縮放；點位為median，水平與垂直線分別為兩軸的P25–P75 error bars。
+- Trade-off圖以memory condition分成並排子圖，X軸使用log scale，Y軸依median範圍自動縮放；點位為median，P25–P75保留於`tradeoff_points.csv`。
 - `cells/<cell-id>/cell.json`：完整cell provenance、metrics與artifact路徑。
 - `logs/<cell-id>.err`：cell失敗時的主要診斷資訊。
 

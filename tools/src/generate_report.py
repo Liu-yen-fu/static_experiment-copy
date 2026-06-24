@@ -218,17 +218,13 @@ def append_significant_effects_section(lines: list[str], root: Path) -> None:
         lines.append(f"- {link('Significant effects CSV', csv_path, root)}")
 
 
-def generate(root: Path) -> str:
-    config = read_json(root / "config.json")
-    manifest = read_json(root / "manifest.json")
-    raw_rows, cells = current_cells(root)
-    counts = Counter(row.get("status", "invalid") for row in raw_rows)
+def append_summary_sections(lines: list[str], config: dict[str, Any], manifest: dict[str, Any], counts: Counter[str]) -> None:
     environment = manifest.get("environment", {})
     experiment = config["experiment"]
     workloads = config["workloads"]
     memory_conditions = config["memory_conditions"]
     page_sizes = environment.get("sqlite_page_sizes", {})
-    lines = [f"# 實驗報告：{md(experiment['id'])}", "", "## 實驗摘要", ""]
+    lines += ["## 實驗摘要", ""]
     lines += table(["項目", "值"], [
         ["Experiment ID", experiment["id"]], ["Prefetch backends", " → ".join(config["prefetch"]["backends"])],
         ["Enabled layouts", ", ".join(config["execution"]["layout_order"])], ["Workload types", ", ".join(workloads["types"])],
@@ -246,9 +242,88 @@ def generate(root: Path) -> str:
         ["Filesystem type", environment.get("filesystem_type")], ["Storage devices", storage_summary(environment.get("storage_device_info"))],
         ["SQLite version", environment.get("sqlite_version")],
     ])
+
+
+def append_tradeoff_section(lines: list[str], root: Path, config: dict[str, Any], workloads: dict[str, Any], include_tables: bool) -> None:
+    lines += ["", "## Prefetch cost 與 first-query improvement trade-off", ""]
+    points_path = root / "plots" / "tradeoff_points.csv"
+    point_rows = read_csv(points_path) if points_path.is_file() else []
+    for backend in config["prefetch"]["backends"]:
+        lines += [f"### {md(backend)}", ""]
+        for workload_type in workloads["types"]:
+            lines += [f"#### {md(workload_type)}", ""]
+            for layout in config["execution"]["layout_order"]:
+                workload_points = [row for row in point_rows if row["backend"] == backend and row["workload_type"] == workload_type and row["layout"] == layout]
+                lines += [f"##### {md(layout)}", "", f"![{md(backend)} / {md(workload_type)} / {md(layout)} prefetch trade-off](plots/tradeoff_{backend}_{workload_type}_{layout}.png)", ""]
+                if include_tables:
+                    lines += table(["Memory condition", "Strategy key", "Prefetch median（P25–P75）", "First-query improvement median（P25–P75）"], [[row["memory_condition"], row["strategy_key"], f"{number(row['prefetch_median_us'])} µs（{number(row['prefetch_p25_us'])}–{number(row['prefetch_p75_us'])}）", f"{number(row['first_query_improvement_median'])}%（{number(row['first_query_improvement_p25'])}–{number(row['first_query_improvement_p75'])}）"] for row in workload_points])
+
+
+def append_core_plots_section(lines: list[str]) -> None:
+    lines += [
+        "",
+        "## 核心 effective 指標圖",
+        "",
+        "下列圖直接使用已納入prefetch cost的effective指標。每個格子代表一個workload type與memory condition，文字標出該格median latency最低的layout/backend/strategy組合；顏色代表相對paired baseline的improvement。",
+        "",
+        "![Best effective average-query latency](plots/best_effective_average_heatmap.png)",
+        "",
+        "![Best effective first-query latency](plots/best_effective_first_heatmap.png)",
+        "",
+        "- 詳細資料： [best_effective_summary.csv](<plots/best_effective_summary.csv>)",
+    ]
+
+
+def append_artifact_links(lines: list[str], root: Path, config: dict[str, Any], workloads: dict[str, Any], memory_conditions: list[dict[str, Any]], results_root: Path, include_all: bool) -> None:
+    points_path = root / "plots" / "tradeoff_points.csv"
+    lines += ["", "## Artifacts 連結", "", f"- {link('Experiment config', root / 'config.json', root)}", f"- {link('Experiment manifest', root / 'manifest.json', root)}"]
+    lines.append(f"- {link('All raw results', results_root / 'all_raw.csv', root)}")
+    lines.append(f"- {link('Best effective summary', root / 'plots' / 'best_effective_summary.csv', root)}")
+    lines.append(f"- {link('Full report', root / 'report.md', root)}")
+    lines.append(f"- {link('Concise report', root / 'report-concise.md', root)}")
+    if (root / "significant_effects.csv").is_file():
+        lines.append(f"- {link('Significant effects CSV', root / 'significant_effects.csv', root)}")
+    if (root / "significant_effects.md").is_file():
+        lines.append(f"- {link('Significant effects Markdown', root / 'significant_effects.md', root)}")
+    lines.append(f"- {link('Trade-off data', points_path, root)}")
+    if not include_all:
+        lines.append("")
+        lines.append("完整 per-workload / per-layout / per-backend CSV 連結請見 full report。")
+        return
+    for workload_type in workloads["types"]:
+        workload_root = results_root / workload_type
+        for condition in memory_conditions:
+            memory_name = condition["name"]
+            lines.append(f"- {link(f'{workload_type}/{memory_name} layout comparison', workload_root / 'layout_comparisons' / f'{memory_name}.csv', root)}")
+            for layout in config["execution"]["layout_order"]:
+                condition_root = workload_root / layout / "memory_conditions" / memory_name
+                for backend in config["prefetch"]["backends"]:
+                    lines.append(f"- {link(f'{workload_type}/{layout}/{memory_name}/{backend} strategy comparison', condition_root / 'backends' / backend / 'strategy_comparison.csv', root)}")
+                lines.append(f"- {link(f'{workload_type}/{layout}/{memory_name} backend comparison', condition_root / 'backend_comparison.csv', root)}")
+        for layout in config["execution"]["layout_order"]:
+            lines.append(f"- {link(f'{workload_type}/{layout} memory comparison', workload_root / layout / 'memory_comparison.csv', root)}")
+
+
+def generate(root: Path, concise: bool = False) -> str:
+    config = read_json(root / "config.json")
+    manifest = read_json(root / "manifest.json")
+    raw_rows, cells = current_cells(root)
+    counts = Counter(row.get("status", "invalid") for row in raw_rows)
+    experiment = config["experiment"]
+    workloads = config["workloads"]
+    memory_conditions = config["memory_conditions"]
+    lines = [f"# {'精簡' if concise else '完整'}實驗報告：{md(experiment['id'])}", ""]
+    append_summary_sections(lines, config, manifest, counts)
     results_root = root / "results"
     append_best_combo_section(lines, config, results_root)
     append_significant_effects_section(lines, root)
+    append_core_plots_section(lines)
+    if concise:
+        append_tradeoff_section(lines, root, config, workloads, include_tables=False)
+        lines += ["", "## Cell 狀態", ""]
+        lines += table(["Status", "數量"], [[status, counts.get(status, 0)] for status in STATUSES])
+        append_artifact_links(lines, root, config, workloads, memory_conditions, results_root, include_all=False)
+        return "\n".join(lines) + "\n"
     lines += ["", "## 各 workload type 結果", ""]
     for workload_type in workloads["types"]:
         workload_root = results_root / workload_type
@@ -292,15 +367,7 @@ def generate(root: Path) -> str:
                     prefetch, first, effective, average, effective_average = metrics.get("prefetch_elapsed_us"), metrics.get("first_query_latency_us"), metrics.get("effective_first_query_latency_us"), metrics.get("average_latency_us"), metrics.get("effective_average_query_latency_us")
                     memory_rows.append([condition, backend or "—", strategy_key, number(prefetch.get("median") if prefetch else None, suffix=" µs"), number(first.get("median") if first else None, suffix=" µs"), number(first.get("change_percent") if first else None, suffix="%"), number(effective.get("median") if effective else None, suffix=" µs"), number(effective.get("change_percent") if effective else None, suffix="%"), number(average.get("median") if average else None, suffix=" µs"), number(average.get("change_percent") if average else None, suffix="%"), number(effective_average.get("median") if effective_average else None, suffix=" µs"), number(effective_average.get("change_percent") if effective_average else None, suffix="%")])
                 lines += [f"##### {md(layout)}", ""] + table(["Memory condition", "Backend", "Strategy key", "Prefetch median", "First-query median", "First-query change", "Effective first-query median", "Effective first-query change", "Average-query median", "Average-query change", "Effective average-query median", "Effective average-query change"], memory_rows)
-    lines += ["", "## Prefetch cost 與 first-query improvement trade-off", ""]
-    points_path = root / "plots" / "tradeoff_points.csv"
-    point_rows = read_csv(points_path) if points_path.is_file() else []
-    for backend in config["prefetch"]["backends"]:
-        lines += [f"### {md(backend)}", ""]
-        for workload_type in workloads["types"]:
-            workload_points = [row for row in point_rows if row["backend"] == backend and row["workload_type"] == workload_type]
-            lines += [f"#### {md(workload_type)}", "", f"![{md(backend)} / {md(workload_type)} prefetch trade-off](plots/tradeoff_{backend}_{workload_type}.png)", ""]
-            lines += table(["Layout", "Memory condition", "Strategy key", "Prefetch median（P25–P75）", "First-query improvement median（P25–P75）"], [[row["layout"], row["memory_condition"], row["strategy_key"], f"{number(row['prefetch_median_us'])} µs（{number(row['prefetch_p25_us'])}–{number(row['prefetch_p75_us'])}）", f"{number(row['first_query_improvement_median'])}%（{number(row['first_query_improvement_p25'])}–{number(row['first_query_improvement_p75'])}）"] for row in workload_points])
+    append_tradeoff_section(lines, root, config, workloads, include_tables=True)
     lines += ["", "## Cell 狀態", ""]
     lines += table(["Status", "數量"], [[status, counts.get(status, 0)] for status in STATUSES])
     failures = [row for row in raw_rows if row.get("status") in {"failed", "timeout", "invalid"}]
@@ -320,25 +387,7 @@ def generate(root: Path) -> str:
             for order, item in enumerate(phases.get(phase, []), 1):
                 workload_rows.append([phase, order, workload_index(item["name"]), item["name"], item.get("sha256", "N/A"), repetitions if phase == "measurement" else 1])
         lines += table(["用途", "抽樣順序", "Index", "檔名", "SHA-256", "Repetitions"], workload_rows)
-    lines += ["", "## Artifacts 連結", "", f"- {link('Experiment config', root / 'config.json', root)}", f"- {link('Experiment manifest', root / 'manifest.json', root)}"]
-    lines.append(f"- {link('All raw results', results_root / 'all_raw.csv', root)}")
-    for workload_type in workloads["types"]:
-        workload_root = results_root / workload_type
-        for condition in memory_conditions:
-            memory_name = condition["name"]
-            lines.append(f"- {link(f'{workload_type}/{memory_name} layout comparison', workload_root / 'layout_comparisons' / f'{memory_name}.csv', root)}")
-            for layout in config["execution"]["layout_order"]:
-                condition_root = workload_root / layout / "memory_conditions" / memory_name
-                for backend in config["prefetch"]["backends"]:
-                    lines.append(f"- {link(f'{workload_type}/{layout}/{memory_name}/{backend} strategy comparison', condition_root / 'backends' / backend / 'strategy_comparison.csv', root)}")
-                lines.append(f"- {link(f'{workload_type}/{layout}/{memory_name} backend comparison', condition_root / 'backend_comparison.csv', root)}")
-        for layout in config["execution"]["layout_order"]:
-            lines.append(f"- {link(f'{workload_type}/{layout} memory comparison', workload_root / layout / 'memory_comparison.csv', root)}")
-    lines.append(f"- {link('Trade-off data', points_path, root)}")
-    if (root / "significant_effects.csv").is_file():
-        lines.append(f"- {link('Significant effects CSV', root / 'significant_effects.csv', root)}")
-    if (root / "significant_effects.md").is_file():
-        lines.append(f"- {link('Significant effects Markdown', root / 'significant_effects.md', root)}")
+    append_artifact_links(lines, root, config, workloads, memory_conditions, results_root, include_all=True)
     return "\n".join(lines) + "\n"
 
 
@@ -353,13 +402,18 @@ def main() -> int:
     config = read_json(root / "config.json")
     for backend in config["prefetch"]["backends"]:
         for workload_type in config["workloads"]["types"]:
-            required = root / "plots" / f"tradeoff_{backend}_{workload_type}.png"
-            if not required.is_file():
-                parser.error(f"required report input is missing: {required}")
-    output = root / "report.md"
-    temporary = root / f".report.md.{os.getpid()}.tmp"
-    temporary.write_text(generate(root), encoding="utf-8", newline="\n")
-    os.replace(temporary, output)
+            for layout in config["execution"]["layout_order"]:
+                required = root / "plots" / f"tradeoff_{backend}_{workload_type}_{layout}.png"
+                if not required.is_file():
+                    parser.error(f"required report input is missing: {required}")
+    for required in ("plots/best_effective_summary.csv", "plots/best_effective_average_heatmap.png", "plots/best_effective_first_heatmap.png"):
+        if not (root / required).is_file():
+            parser.error(f"required report input is missing: {root / required}")
+    for name, concise in (("report.md", False), ("report-concise.md", True)):
+        output = root / name
+        temporary = root / f".{name}.{os.getpid()}.tmp"
+        temporary.write_text(generate(root, concise=concise), encoding="utf-8", newline="\n")
+        os.replace(temporary, output)
     return 0
 
 

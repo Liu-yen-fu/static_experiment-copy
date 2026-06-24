@@ -76,6 +76,7 @@ static_experiment/
       ├─ significant_effects.csv
       ├─ significant_effects.md
       ├─ report.md
+      ├─ report-concise.md
       └─ results/
          ├─ all_raw.csv
          └─ <workload-type>/
@@ -187,8 +188,11 @@ python3 tools/src/build_layouts.py \
 
 負責根據 summary 產生：
 
-- 每個configured backend與workload type組合各一份`plots/tradeoff_<backend>_<workload-type>.png`
+- 每個configured backend、workload type與layout組合各一份`plots/tradeoff_<backend>_<workload-type>_<layout>.png`
 - `plots/tradeoff_points.csv`
+- `plots/best_effective_summary.csv`
+- `plots/best_effective_average_heatmap.png`
+- `plots/best_effective_first_heatmap.png`
 
 ### 3.7 `find_significant_effects.py`
 
@@ -1578,18 +1582,23 @@ Y軸: first-query improvement percent
 layout × workload type × memory condition × strategy variant
 ```
 
-X軸與Y軸均顯示p25–p75 error bars。Y軸使用same-layout paired baseline improvement。同一backend與workload type圖必須依memory condition分成並排子圖；子圖共享依所有P25–P75範圍加padding計算的Y軸尺度。X軸在所有P25均大於0時使用log scale。點形區分layout與strategy variant，圖例以`layout:short-strategy`或等價短標示標示點位。
+Trade-off圖只顯示median點，不顯示p25–p75 error bars；P25–P75仍必須保留於`tradeoff_points.csv`。Y軸使用same-layout paired baseline improvement。同一backend、workload type與layout圖必須依memory condition分成並排子圖；子圖共享依median範圍加padding計算的Y軸尺度。X軸在所有median prefetch cost均大於0時使用log scale。點形區分strategy variant，圖例以`short-strategy`或等價短標示標示點位。
 
 優先使用Matplotlib產生完整座標、圖例與並排子圖。Matplotlib不可用時可使用Pillow fallback；兩者皆不可用時仍須輸出內建最小PNG，但最小fallback只保證座標線、點位與error bars，不保證文字標籤。
 
 輸出：
 
 ```text
-experiments/<experiment-id>/plots/tradeoff_<backend>_<workload-type>.png
+experiments/<experiment-id>/plots/tradeoff_<backend>_<workload-type>_<layout>.png
 experiments/<experiment-id>/plots/tradeoff_points.csv
+experiments/<experiment-id>/plots/best_effective_summary.csv
+experiments/<experiment-id>/plots/best_effective_average_heatmap.png
+experiments/<experiment-id>/plots/best_effective_first_heatmap.png
 ```
 
-`plot_tradeoff.py`必須為config列出的每個backend與每個workload type組合各產生一張PNG。`<backend>`與`<workload-type>`必須使用config中的名稱。Markdown report必須使用per-workload-type圖，避免formal experiment中點位過度擁擠。
+`plot_tradeoff.py`必須為config列出的每個backend、每個workload type與每個layout組合各產生一張trade-off PNG。`<backend>`、`<workload-type>`與`<layout>`必須使用config中的名稱。Markdown report必須使用per-layout trade-off圖，避免formal experiment中點位過度擁擠。
+
+核心effective圖必須以`workload type × memory condition`為格子，分別針對`effective_average_query_latency_us`與`effective_first_query_latency_us`選出median latency最低的layout/backend/strategy組合。`best_effective_summary.csv`必須保留圖中每格的layout、backend、strategy、median、P25、P75與improvement。Heatmap顏色代表相對paired baseline的improvement，格內文字標出最佳組合。
 
 `tradeoff_points.csv`跨越所有workload types、layouts、memory conditions與strategy variants，因此必須保留完整分類欄位。欄位固定為：
 
@@ -1603,9 +1612,10 @@ Experiment完成後必須產生：
 
 ```text
 experiments/<experiment-id>/report.md
+experiments/<experiment-id>/report-concise.md
 ```
 
-`report.md`必須使用繁體中文，並包含下列章節：
+`report.md`與`report-concise.md`必須使用繁體中文。`report.md`是完整審計報告，必須包含下列章節：
 
 ```text
 實驗摘要
@@ -1616,10 +1626,26 @@ experiments/<experiment-id>/report.md
 Layout比較
 各layout的strategy比較
 Prefetch cost與first-query improvement trade-off
+核心effective指標圖
 Cell狀態
 Training與measurement workload清單
 Artifacts連結
 ```
+
+`report-concise.md`是精簡閱讀版，必須至少包含：
+
+```text
+實驗摘要
+執行環境
+最佳layout / strategy / backend組合
+統計顯著效果
+Prefetch cost與first-query improvement trade-off圖
+核心effective指標圖
+Cell狀態
+主要Artifacts連結
+```
+
+精簡版不得展開每個workload/layout/backend/strategy的完整比較表；完整表格由`report.md`與CSV artifacts保留。
 
 ### 25.1 實驗摘要
 
@@ -1787,8 +1813,9 @@ Effective average-query change vs reference condition
 Markdown報告必須依config中的backend順序，再依workload type順序嵌入每張圖：
 
 ```markdown
-![madvise / read_zipf_full prefetch cost 與 first-query improvement](plots/tradeoff_madvise_read_zipf_full.png)
-![pread / read_zipf_full prefetch cost 與 first-query improvement](plots/tradeoff_pread_read_zipf_full.png)
+![best effective average-query latency](plots/best_effective_average_heatmap.png)
+![best effective first-query latency](plots/best_effective_first_heatmap.png)
+![madvise / read_zipf_full / original prefetch cost 與 first-query improvement](plots/tradeoff_madvise_read_zipf_full_original.png)
 ```
 
 圖後必須附上trade-off點位表，至少包含：
@@ -1911,6 +1938,7 @@ total: 45 cells
 - Trade-off CSV與config中每個backend/workload type對應的PNG產生成功。
 - `significant_effects.csv`與`significant_effects.md`產生成功。
 - `report.md`產生成功且包含實驗摘要、執行環境、最佳組合推薦、統計顯著效果、layout比較、per-memory-condition與per-backend strategy比較、backend比較、memory condition比較、first-query與average-query latency、trade-off圖、cell狀態、workload清單與artifact連結。
+- `report-concise.md`產生成功且只保留摘要、最佳組合、統計顯著效果、trade-off圖、cell狀態與主要artifact連結。
 - 相同config重跑時不得重新抽樣、重新training或重跑completed cells。
 - Smoke不要求任何prefetch策略必須優於baseline。
 
