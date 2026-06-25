@@ -4,7 +4,7 @@
 
 實驗模擬下列情境：應用程式仍在執行，SQLite connection 與 prepared statements 已建立，但 database 的 file-backed pages 已從 Linux page cache 回收。每個 measurement cell 都會重新清除 page cache，在第一筆 query 前選擇性執行 `madvise(MADV_WILLNEED)` 或 buffered `pread()` prefetch。
 
-完整規格與 artifact schema 請參閱 [DESIGN_REVISED.md](DESIGN_REVISED.md)。`DESIGN.md`保留為原始版本，不代表目前實作契約。
+完整規格與 artifact schema 請參閱 [DESIGN_REVISED.md](DESIGN_REVISED.md)。`DESIGN.md`保留為原始版本，不代表目前實作契約。若要理解正式報告中可使用的實驗方法描述，請參閱 [EXPERIMENT_METHOD.md](EXPERIMENT_METHOD.md)；本README偏向操作手冊，`EXPERIMENT_METHOD.md`偏向實驗方法與orchestrator流程說明。
 
 ## 前置條件
 
